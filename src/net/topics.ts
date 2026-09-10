@@ -22,6 +22,10 @@ export const Topics = {
   playerState: (r: RoomId, p: PlayerId) => `${root}/room/${r}/player/${p}/state`,
   playerStateAll: (r: RoomId) => `${root}/room/${r}/player/+/state`,
 
+  /** Shots fired by one player, batched. Cosmetic only — see GameScene. */
+  playerShots: (r: RoomId, p: PlayerId) => `${root}/room/${r}/player/${p}/shots`,
+  playerShotsAll: (r: RoomId) => `${root}/room/${r}/player/+/shots`,
+
   /** The batched horde snapshot — one message for the entire horde, 20x/sec. */
   hordePositions: (r: RoomId) => `${root}/room/${r}/horde/positions`,
 

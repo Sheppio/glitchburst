@@ -145,6 +145,34 @@ export function decodePlayer(id, payload) {
 export function sanitizeName(name) {
     return (name || 'ANON').replace(/[^A-Za-z0-9_\- ]/g, '').slice(0, 14).trim() || 'ANON';
 }
+/**
+ * Trigger pulls, not individual projectiles.
+ *
+ * Only the shot origin and angle go on the wire; pellet count, spread, speed
+ * and lifetime are all derivable from the shooter's class, which every client
+ * already knows. A Fireman's seven-pellet blast is therefore one record of
+ * about fourteen bytes rather than seven.
+ */
+export function encodeShots(shots) {
+    let out = '';
+    for (const shot of shots)
+        out += i(shot.x) + FLD + i(shot.y) + FLD + i(shot.angle * 100) + REC;
+    return out;
+}
+export function decodeShots(payload) {
+    const out = [];
+    if (!payload)
+        return out;
+    for (const rec of payload.split(REC)) {
+        if (!rec)
+            continue;
+        const f = rec.split(FLD);
+        if (f.length < 3)
+            continue;
+        out.push({ x: num(f[0]), y: num(f[1]), angle: num(f[2]) / 100 });
+    }
+    return out;
+}
 export function encodePresence(m) {
     return [sanitizeName(m.name), m.cls, m.host, m.alive].join(FLD);
 }

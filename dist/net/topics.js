@@ -15,6 +15,9 @@ export const Topics = {
     /** Per-player state, published by that player and nobody else. */
     playerState: (r, p) => `${root}/room/${r}/player/${p}/state`,
     playerStateAll: (r) => `${root}/room/${r}/player/+/state`,
+    /** Shots fired by one player, batched. Cosmetic only — see GameScene. */
+    playerShots: (r, p) => `${root}/room/${r}/player/${p}/shots`,
+    playerShotsAll: (r) => `${root}/room/${r}/player/+/shots`,
     /** The batched horde snapshot — one message for the entire horde, 20x/sec. */
     hordePositions: (r) => `${root}/room/${r}/horde/positions`,
     /** Deaths, drone projectiles and wave announcements, batched the same way. */

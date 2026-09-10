@@ -1,7 +1,7 @@
 import * as Phaser from 'phaser';
 import { HORDE, NET, RENDER, TURN_RATE_RAD_PER_SEC, WORLD } from '../config.js';
 import { HAPTIC } from '../input/settings.js';
-import { decodeEvents, decodeField, decodeHorde, decodePause, decodePlayer, encodeDamage, encodeEvents, encodeField, encodeHorde, encodePause, encodePlayer, } from '../net/codec.js';
+import { decodeEvents, decodeField, decodeHorde, decodePause, decodeShots, decodePlayer, encodeDamage, encodeEvents, encodeField, encodeHorde, encodePause, encodePlayer, encodeShots, } from '../net/codec.js';
 import { Topics, segment } from '../net/topics.js';
 import { CLASSES } from '../sim/classes.js';
 import { ENEMY_DEFS } from '../sim/enemyTypes.js';
@@ -68,6 +68,17 @@ export class GameScene extends Phaser.Scene {
     fields = new Map();
     bullets = [];
     enemyBullets = [];
+    /**
+     * Projectiles fired by *other* players.
+     *
+     * Purely cosmetic: they never test collision and never deal damage, because
+     * under attacker authority only the shooter's own client decides whether its
+     * rounds connected. Rendering them is what makes a squad feel like a squad
+     * rather than four people fighting invisible battles beside each other.
+     */
+    remoteBullets = [];
+    /** Shots fired locally since the last publish. */
+    outboundShots = [];
     chips = [];
     powerUps = [];
     /** This player's run progress. Never leaves the client. */
@@ -170,6 +181,7 @@ export class GameScene extends Phaser.Scene {
         this.updateLocalPlayer(dt);
         this.updateBullets(dt);
         this.updateEnemyBullets(dt);
+        this.updateRemoteBullets(dt);
         this.updateFields(dt);
         this.updateChips(dt);
         this.updatePowerUps(dt);
@@ -249,6 +261,12 @@ export class GameScene extends Phaser.Scene {
                 .setRotation(a)
                 .setTint(this.def.colour)
                 .setVisible(true);
+        }
+        // One record per trigger pull; the pellet fan is rebuilt from the class
+        // definition on the receiving side. Capped so a pathological burst cannot
+        // inflate a single message.
+        if (this.outboundShots.length < 16) {
+            this.outboundShots.push({ x: this.me.x, y: this.me.y, angle });
         }
         this.fx.muzzleFlash(this.me.x + Math.cos(angle) * (this.def.radius + 10), this.me.y + Math.sin(angle) * (this.def.radius + 10), angle, this.def.colour);
         this.cameras.main.shake(60, 0.0016);
@@ -732,6 +750,13 @@ export class GameScene extends Phaser.Scene {
             const amount = Number(amountText);
             if (Number.isFinite(amount))
                 this.horde.reportDamage(enemyId, amount, attacker ?? '?');
+        }), net.subscribe(Topics.playerShotsAll(id), (topic, payload) => {
+            const shooter = segment(topic, 1);
+            // Our own shots are already on screen.
+            if (shooter === this.me.id)
+                return;
+            for (const shot of decodeShots(payload))
+                this.spawnRemoteShot(shooter, shot);
         }), net.subscribe(Topics.pause(id), (_t, payload) => {
             const msg = decodePause(payload);
             // Only the acting host may pause the room; ignore anyone else.
@@ -795,7 +820,14 @@ export class GameScene extends Phaser.Scene {
         this.publishPlayerNow();
     }
     publishPlayerNow() {
-        this.cfg.net.publish(Topics.playerState(this.cfg.room.roomId, this.me.id), encodePlayer(this.me));
+        const room = this.cfg.room.roomId;
+        this.cfg.net.publish(Topics.playerState(room, this.me.id), encodePlayer(this.me));
+        // Shots ride the same cadence but only when there are any, so a player who
+        // is not firing costs nothing extra.
+        if (this.outboundShots.length) {
+            this.cfg.net.publish(Topics.playerShots(room, this.me.id), encodeShots(this.outboundShots));
+            this.outboundShots.length = 0;
+        }
     }
     /* ----------------------------------------------------- entity bookkeeping */
     spawnEnemyView(id, kind, x, y) {
@@ -959,6 +991,66 @@ export class GameScene extends Phaser.Scene {
         this.cfg.onBanner(def.name.toUpperCase(), `${def.blurb} · ${this.progress.stacks[id]} stacks`);
         this.cameras.main.flash(140, 255, 255, 255, false);
         this.cfg.input.triggerRumble(0.5, 0.3, 130);
+    }
+    /**
+     * Rebuild another player's shot locally.
+     *
+     * The wire carried one trigger pull; the fan of pellets comes from that
+     * player's class, so a Fireman's shotgun looks like a shotgun and an
+     * Overclocker's laser looks like a laser without either being transmitted.
+     */
+    spawnRemoteShot(shooter, shot) {
+        const remote = this.remotes.get(shooter);
+        if (!remote)
+            return;
+        const def = CLASSES[remote.state.cls] ?? CLASSES.overclocker;
+        const w = def.weapon;
+        const step = w.pellets > 1 ? w.spread / (w.pellets - 1) : 0;
+        const start = shot.angle - w.spread / 2;
+        for (let n = 0; n < w.pellets; n++) {
+            const a = w.pellets > 1 ? start + step * n : shot.angle;
+            const bullet = this.takeRemoteBullet();
+            bullet.x = shot.x + Math.cos(shot.angle) * (def.radius + 8);
+            bullet.y = shot.y + Math.sin(shot.angle) * (def.radius + 8);
+            bullet.vx = Math.cos(a) * w.speed;
+            bullet.vy = Math.sin(a) * w.speed;
+            bullet.life = w.lifeSec;
+            bullet.damage = 0;
+            bullet.active = true;
+            bullet.sprite
+                .setTexture(TEX.bullet)
+                .setPosition(bullet.x, bullet.y)
+                .setRotation(a)
+                .setTint(def.colour)
+                .setVisible(true);
+        }
+        this.fx.muzzleFlash(shot.x + Math.cos(shot.angle) * (def.radius + 10), shot.y + Math.sin(shot.angle) * (def.radius + 10), shot.angle, def.colour);
+    }
+    updateRemoteBullets(dt) {
+        for (const b of this.remoteBullets) {
+            if (!b.active)
+                continue;
+            b.life -= dt;
+            b.x += b.vx * dt;
+            b.y += b.vy * dt;
+            if (b.life <= 0 || b.x < 0 || b.y < 0 || b.x > WORLD.width || b.y > WORLD.height) {
+                b.active = false;
+                b.sprite.setVisible(false);
+                continue;
+            }
+            b.sprite.setPosition(b.x, b.y);
+        }
+    }
+    takeRemoteBullet() {
+        const free = this.remoteBullets.find((b) => !b.active);
+        if (free)
+            return free;
+        const bullet = {
+            sprite: this.add.image(0, 0, TEX.bullet).setDepth(24),
+            x: 0, y: 0, vx: 0, vy: 0, life: 0, damage: 0, active: false,
+        };
+        this.remoteBullets.push(bullet);
+        return bullet;
     }
     takeChip() {
         const free = this.chips.find((c) => !c.active);

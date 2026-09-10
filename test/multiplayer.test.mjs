@@ -136,6 +136,41 @@ check('host counts a squad of two', aSquad.squad === 2 && aSquad.engineSquad ===
   `room ${aSquad.squad}, engine ${aSquad.engineSquad}`);
 check('HUD reports squad size', (await a.textContent('#hud-players')).trim() === '2/4');
 
+/* --------------------------------------------------------- seeing the squad */
+
+// Make the host fire, and confirm the peer actually renders those rounds.
+await a.bringToFront();
+await a.evaluate(() => {
+  window.glitchburst.settings.set('autoFire', true);
+  window.glitchburst.settings.set('autoAim', true);
+});
+await a.waitForTimeout(1500);
+
+const seen = await b.evaluate(() => {
+  const scene = window.glitchburst.game.scene.getScene('game');
+  return {
+    remote: scene.remoteBullets.filter((x) => x.active).length,
+    own: scene.bullets.filter((x) => x.active).length,
+  };
+});
+check("a peer sees the host's bullets", seen.remote > 0,
+  `${seen.remote} remote rounds on screen`);
+check('and does not confuse them for its own', seen.own === 0);
+
+check('remote bullets are inert (attacker authority)', await b.evaluate(() => {
+  const scene = window.glitchburst.game.scene.getScene('game');
+  return scene.remoteBullets.every((x) => x.damage === 0);
+}), 'zero damage, never collide');
+
+check('shots are batched, not one message per pellet', await a.evaluate(() => {
+  const shots = window.__published.filter((m) => m.topic.endsWith('/shots'));
+  if (!shots.length) return false;
+  // Every message is a batch of "x,y,angle;" records for a whole publish tick.
+  return shots.every((m) => /^(-?\d+,-?\d+,-?\d+;)+$/.test(m.payload));
+}), `${await a.evaluate(() => window.__published.filter((m) => m.topic.endsWith('/shots')).length)} shot batches`);
+
+await a.evaluate(() => window.glitchburst.settings.set('autoFire', false));
+
 /* ---------------------------------------------------------------- pause */
 
 const peerPositions = () => b.evaluate(() => {
