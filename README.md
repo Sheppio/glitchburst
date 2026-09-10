@@ -193,8 +193,10 @@ Two independent dials, applied per wave from the live roster:
   opposite of what co-op should reward. Solo gets a further 10% discount.
 
 Both track the roster live, so a player leaving eases the *next* wave rather
-than leaving four players' worth of malware chasing one survivor. Decoys are
-excluded from the count — baiting the horde must not make the horde bigger.
+than leaving four players' worth of malware chasing one survivor. A downed
+player counts the same way — the horde stops targeting them and difficulty
+relaxes until they reboot. Decoys are excluded from the count entirely; baiting
+the horde must not make the horde bigger.
 
 A fifth arrival works out that it is the overflow (same sort as the election)
 and backs out on its own.

@@ -26,6 +26,17 @@ const openClient = async (target) => {
   return page;
 };
 
+/**
+ * Neither test client ever moves, so a wave will corner and kill it. A downed
+ * player is deliberately excluded from AI targeting and from difficulty
+ * scaling, which would make the squad-size assertion below measure survival
+ * rather than squad counting. Keep both upright; a real player would be dodging.
+ */
+const keepAlive = (page) => page.evaluate(() => {
+  const scene = window.glitchburst.game.scene.getScene('game');
+  window.__keepAlive = setInterval(() => { scene.me.hp = scene.me.maxHp; }, 100);
+});
+
 const state = (page) => page.evaluate(() => {
   const scene = window.glitchburst.game?.scene.getScene('game');
   return {
@@ -51,6 +62,7 @@ await a.click('.class-card[data-cls="overclocker"]');
 await a.click('#btn-deploy');
 await a.waitForSelector('#screen-hud:not([hidden])');
 await a.waitForFunction(() => window.glitchburst.room?.isHost === true, null, { timeout: 6000 });
+await keepAlive(a);
 
 check('first client to join becomes host', (await state(a)).isHost, `room ${code}`);
 
@@ -75,6 +87,7 @@ await b.fill('#input-callsign', 'BRAVO');
 await b.click('.class-card[data-cls="encoder"]');
 await b.click('#btn-deploy');
 await b.waitForSelector('#screen-hud:not([hidden])');
+await keepAlive(b);
 await b.waitForTimeout(2500);
 
 const bState = await state(b);
