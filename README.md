@@ -52,6 +52,7 @@ src/
 ├── sim/      authoritative horde AI, enemy stats, class definitions
 ├── input/    keyboard/mouse, gamepad, touch → one unified Intent
 ├── render/   Phaser scenes, procedural textures, effects, interpolation
+│            (Progression.ts owns chips/power-ups; pool.ts the shared pool)
 ├── ui/       DOM overlay: menu, class select, settings, HUD, gamepad nav
 └── main.ts   wiring
 ```
@@ -448,6 +449,24 @@ interval. Timing assertions poll for outcomes rather than sleeping.
 - Public brokers give no delivery guarantees. Snapshots are full state, so a
   dropped one self-heals on the next tick; a dropped *damage report*, however,
   is simply lost.
+
+## A note on performance
+
+Profiled at the worst case the game can reach — 100 enemies, a full 220-chip
+pool, bullets in flight — every per-frame method together costs about **1.2 ms**
+against a 16.7 ms budget:
+
+| method | per call |
+| --- | --- |
+| `updateLocalPlayer` | 0.64 ms |
+| `updateBullets` | 0.51 ms |
+| `pushHud` | 0.20 ms |
+| `nearestEnemy` | 0.16 ms |
+| `updateChips` | 0.07 ms |
+
+Frame spikes under headless software rendering are SwiftShader, not game logic.
+Optimising this hot path would be busywork — if something does get slow later,
+measure before assuming it is the JS.
 
 ## Deployment
 

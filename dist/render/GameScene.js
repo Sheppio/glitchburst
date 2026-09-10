@@ -6,13 +6,14 @@ import { Topics, segment } from '../net/topics.js';
 import { CLASSES, classDps } from '../sim/classes.js';
 import { ENEMY_DEFS } from '../sim/enemyTypes.js';
 import { HordeEngine } from '../sim/HordeEngine.js';
-import { PROGRESSION, PlayerProgress, UPGRADES, UPGRADE_ORDER } from '../sim/progression.js';
+import { PROGRESSION, UPGRADES, UPGRADE_ORDER } from '../sim/progression.js';
 import { pickTarget } from '../sim/targeting.js';
 import { EnemyKind, FLAG_ABILITY, FLAG_DOWN, FLAG_FIRING } from '../types.js';
-import { approachAngle, clamp, counterId, dist2, hashUnit, lerpAngle, segmentDist2 } from '../util.js';
+import { approachAngle, clamp, counterId, dist2, lerpAngle, segmentDist2 } from '../util.js';
 import { DAMAGE_RED, Fx } from './fx.js';
 import { glide, smoothing } from './lerp.js';
 import { Pool } from './pool.js';
+import { ProgressionSystem } from './Progression.js';
 import { TEX } from './textures.js';
 /**
  * The game.
@@ -91,16 +92,8 @@ export class GameScene extends Phaser.Scene {
     }));
     /** Shots fired locally since the last publish. */
     outboundShots = [];
-    chips = new Pool(() => ({
-        sprite: this.add.image(0, 0, TEX.chip).setDepth(12),
-        x: 0, y: 0, vx: 0, vy: 0, homing: false, speed: 0, ttl: 0, active: false,
-    }));
-    powerUps = new Pool(() => ({
-        sprite: this.add.image(0, 0, TEX.powerUp('damage')).setDepth(14),
-        upgrade: 'damage', x: 0, y: 0, ttl: 0, active: false,
-    }));
-    /** This player's run progress. Never leaves the client. */
-    progress = new PlayerProgress();
+    /** Chips, power-ups and upgrades. See `render/Progression.ts`. */
+    progression;
     /** Enemy currently held by auto-aim, so the lock can be sticky. */
     autoTargetId = null;
     fireCooldown = 0;
@@ -155,6 +148,21 @@ export class GameScene extends Phaser.Scene {
         };
         this.buildArena();
         this.fx = new Fx(this);
+        this.progression = new ProgressionSystem({
+            scene: this,
+            fx: this.fx,
+            collector: () => ({
+                x: this.me.x,
+                y: this.me.y,
+                radius: this.def.radius,
+                canCollect: this.downedFor <= 0,
+            }),
+            award: (score) => {
+                this.score += score;
+            },
+            banner: (text, sub) => this.cfg.onBanner(text, sub),
+            rumble: (weak, strong, ms) => this.cfg.input.triggerRumble(weak, strong, ms),
+        });
         this.playerAura = this.add
             .image(this.me.x, this.me.y, TEX.glow)
             .setTint(this.def.colour)
@@ -203,8 +211,7 @@ export class GameScene extends Phaser.Scene {
         this.updateEnemyBullets(dt);
         this.updateRemoteBullets(dt);
         this.updateFields(dt);
-        this.updateChips(dt);
-        this.updatePowerUps(dt);
+        this.progression.update(dt);
         // Enemy motion is interpolated identically whether this client is the host
         // or a peer: the host's own simulation only refreshes targets at 20Hz too.
         this.interpolateEnemies(delta);
@@ -232,7 +239,7 @@ export class GameScene extends Phaser.Scene {
                 this.respawn();
             return;
         }
-        const speed = this.def.speed * (boosted ? 1.35 : 1) * this.progress.speedMultiplier;
+        const speed = this.def.speed * (boosted ? 1.35 : 1) * this.progression.progress.speedMultiplier;
         this.me.x = clamp(this.me.x + intent.moveX * speed * dt, 24, WORLD.width - 24);
         this.me.y = clamp(this.me.y + intent.moveY * speed * dt, 24, WORLD.height - 24);
         // Turn toward the requested angle at a fixed rate rather than snapping to
@@ -257,9 +264,9 @@ export class GameScene extends Phaser.Scene {
     fireWeapon(angle, boosted) {
         const w = this.def.weapon;
         this.fireCooldown =
-            (w.fireIntervalSec * this.progress.fireIntervalMultiplier) /
+            (w.fireIntervalSec * this.progression.progress.fireIntervalMultiplier) /
                 (boosted ? this.def.ability.magnitude : 1);
-        const damage = w.damage * this.progress.damageMultiplier;
+        const damage = w.damage * this.progression.progress.damageMultiplier;
         const step = w.pellets > 1 ? w.spread / (w.pellets - 1) : 0;
         const start = angle - w.spread / 2;
         for (let n = 0; n < w.pellets; n++) {
@@ -873,201 +880,7 @@ export class GameScene extends Phaser.Scene {
             this.enemies.delete(id);
         }
         this.fx.enemyBurst(x, y, def.colour, kind === EnemyKind.TrojanTank ? 2 : 1);
-        this.spawnChips(x, y, def.chipDrop, id);
-        this.maybeDropPowerUp(x, y, def.powerUpChance, id);
-    }
-    /**
-     * Bigger malware sometimes drops a power-up outright, on top of its chips —
-     * so committing to a Trojan Tank while a wave closes in is a decision rather
-     * than a chore.
-     *
-     * The roll is a hash of the enemy id, not `Math.random`, so every client
-     * independently agrees on which corpse dropped one. The *upgrade* it offers
-     * is still rolled per player, because it is weighted against that player's
-     * own build — two players can walk to the same node and each get what their
-     * loadout is short of.
-     */
-    maybeDropPowerUp(x, y, chance, enemyId) {
-        if (chance <= 0 || hashUnit(enemyId) >= chance)
-            return;
-        this.spawnPowerUp(x, y);
-    }
-    /* ------------------------------------------------------------ progression */
-    /**
-     * Drop chips where an enemy died.
-     *
-     * Chips are spawned independently on **every** client and collected purely
-     * locally — they never touch the wire. That is worth being explicit about,
-     * because the obvious alternative (host owns the loot, clients ask to pick it
-     * up) is worse in every dimension that matters here: it adds a round trip to
-     * the most tactile interaction in the game, it needs arbitration for two
-     * players reaching the same chip, and it makes pickups feel laggy on exactly
-     * the connection that is already struggling.
-     *
-     * Making them per-player costs nothing on the network (deaths are already
-     * broadcast), removes the race entirely, and is better co-op design besides:
-     * nobody competes with their squad for loot, and a player who joins a fight
-     * late is not starved of progression.
-     *
-     * The drop count is fixed per enemy kind and the scatter is derived from the
-     * enemy id, so every client independently produces the same pile.
-     */
-    spawnChips(x, y, count, enemyId) {
-        const seed = enemyId.charCodeAt(enemyId.length - 1) + enemyId.length;
-        // Counted once, not per chip: this used to scan (and allocate) the whole
-        // pool for every chip in the drop, making a Trojan Tank's four-chip payout
-        // quadratic in pool size.
-        let room = PROGRESSION.maxChips - this.chips.countActive();
-        for (let n = 0; n < count; n++) {
-            if (room-- <= 0)
-                return;
-            const angle = (((seed * 31 + n * 97) % 360) * Math.PI) / 180;
-            const chip = this.chips.acquire();
-            chip.x = x;
-            chip.y = y;
-            // A small outward pop so a stack of four reads as four, not one.
-            chip.vx = Math.cos(angle) * 90;
-            chip.vy = Math.sin(angle) * 90;
-            chip.homing = false;
-            chip.speed = 0;
-            chip.ttl = PROGRESSION.chipTtlSec;
-            chip.active = true;
-            chip.sprite.setPosition(x, y).setVisible(true).setAlpha(1).setScale(1);
-        }
-    }
-    updateChips(dt) {
-        const collectable = this.downedFor <= 0;
-        for (const chip of this.chips.items) {
-            if (!chip.active)
-                continue;
-            chip.ttl -= dt;
-            if (chip.ttl <= 0) {
-                chip.active = false;
-                chip.sprite.setVisible(false);
-                continue;
-            }
-            const dx = this.me.x - chip.x;
-            const dy = this.me.y - chip.y;
-            const distance = Math.hypot(dx, dy);
-            if (collectable && !chip.homing && distance <= PROGRESSION.magnetRadius) {
-                chip.homing = true;
-                chip.speed = PROGRESSION.magnetInitialSpeed;
-            }
-            if (chip.homing && collectable) {
-                // Accelerate, never damp. This is the whole point: the player has a top
-                // speed and the chip does not, so the gap always closes. Damping here
-                // (which an earlier version applied every frame) caps the chip at
-                // accel/damping, which landed below player run speed at range — chips
-                // could simply be outrun.
-                chip.speed = Math.min(PROGRESSION.magnetMaxSpeed, chip.speed + PROGRESSION.magnetAccel * dt);
-                const step = chip.speed * dt;
-                // Collect on contact, or when this frame's step would carry the chip
-                // past the player — at these speeds a fast chip can cross the whole
-                // pickup radius between frames and would otherwise tunnel straight
-                // through.
-                if (distance <= PROGRESSION.pickupRadius || step >= distance) {
-                    chip.active = false;
-                    chip.sprite.setVisible(false);
-                    this.collectChip();
-                    continue;
-                }
-                const inv = 1 / (distance || 1);
-                chip.x += dx * inv * step;
-                chip.y += dy * inv * step;
-                chip.sprite.setPosition(chip.x, chip.y);
-            }
-            else {
-                // Loose on the floor: let the death pop settle out.
-                chip.vx *= PROGRESSION.scatterDamping;
-                chip.vy *= PROGRESSION.scatterDamping;
-                chip.x += chip.vx * dt;
-                chip.y += chip.vy * dt;
-                chip.sprite.setPosition(chip.x, chip.y);
-                if (collectable && distance <= PROGRESSION.pickupRadius) {
-                    chip.active = false;
-                    chip.sprite.setVisible(false);
-                    this.collectChip();
-                    continue;
-                }
-            }
-            // Blink out the last couple of seconds so an expiring chip is not a surprise.
-            if (chip.ttl < 2.5)
-                chip.sprite.setAlpha(0.35 + Math.sin(this.time.now / 60) * 0.35);
-        }
-    }
-    collectChip() {
-        this.score += 1;
-        const earned = this.progress.addChip();
-        this.fx.chipSpark(this.me.x, this.me.y);
-        if (earned)
-            this.spawnPowerUp();
-    }
-    /**
-     * Drop a power-up. With no position it materialises beside the player, which
-     * is what a completed set of chips does.
-     */
-    spawnPowerUp(atX, atY) {
-        const upgrade = this.progress.rollUpgrade();
-        if (!upgrade) {
-            // Everything is maxed; bank it as score instead of dropping a dud.
-            this.score += 250;
-            this.cfg.onBanner('FULLY OPTIMISED', '+250');
-            return;
-        }
-        const angle = Math.random() * Math.PI * 2;
-        const fromKill = atX !== undefined && atY !== undefined;
-        const originX = fromKill ? atX : this.me.x + Math.cos(angle) * PROGRESSION.spawnRadius;
-        const originY = fromKill ? atY : this.me.y + Math.sin(angle) * PROGRESSION.spawnRadius;
-        const powerUp = this.powerUps.acquire();
-        powerUp.upgrade = upgrade;
-        powerUp.x = clamp(originX, 40, WORLD.width - 40);
-        powerUp.y = clamp(originY, 40, WORLD.height - 40);
-        powerUp.ttl = PROGRESSION.powerUpTtlSec;
-        powerUp.active = true;
-        powerUp.sprite
-            .setTexture(TEX.powerUp(upgrade))
-            .setPosition(powerUp.x, powerUp.y)
-            .setVisible(true)
-            .setAlpha(1)
-            .setScale(0.2);
-        this.tweens.add({ targets: powerUp.sprite, scale: 1, duration: 320, ease: 'Back.easeOut' });
-        this.fx.ring(powerUp.x, powerUp.y, 90, UPGRADES[upgrade].colour, 420);
-        this.cfg.onBanner(fromKill ? 'RARE DROP' : 'POWER-UP READY', UPGRADES[upgrade].name);
-    }
-    updatePowerUps(dt) {
-        for (const powerUp of this.powerUps.items) {
-            if (!powerUp.active)
-                continue;
-            powerUp.ttl -= dt;
-            if (powerUp.ttl <= 0) {
-                powerUp.active = false;
-                powerUp.sprite.setVisible(false);
-                continue;
-            }
-            // Bob and spin: a stationary hexagon on a static floor is easy to miss.
-            powerUp.sprite.setY(powerUp.y + Math.sin(this.time.now / 260) * 5);
-            powerUp.sprite.setRotation(Math.sin(this.time.now / 700) * 0.22);
-            if (powerUp.ttl < 4)
-                powerUp.sprite.setAlpha(0.4 + Math.sin(this.time.now / 80) * 0.4);
-            if (this.downedFor > 0)
-                continue;
-            const reach = PROGRESSION.powerUpPickupRadius + this.def.radius;
-            if (dist2(this.me.x, this.me.y, powerUp.x, powerUp.y) > reach * reach)
-                continue;
-            powerUp.active = false;
-            powerUp.sprite.setVisible(false);
-            this.applyUpgrade(powerUp.upgrade);
-        }
-    }
-    applyUpgrade(id) {
-        const def = UPGRADES[id];
-        if (!this.progress.grant(id))
-            return;
-        this.fx.ring(this.me.x, this.me.y, 150, def.colour, 480);
-        this.fx.upgradeText(this.me.x, this.me.y - 40, def.blurb, def.colour);
-        this.cfg.onBanner(def.name.toUpperCase(), `${def.blurb} · ${this.progress.stacks[id]} stacks`);
-        this.cameras.main.flash(140, 255, 255, 255, false);
-        this.cfg.input.triggerRumble(0.5, 0.3, 130);
+        this.progression.dropFrom(x, y, def, id);
     }
     /**
      * Rebuild another player's shot locally.
@@ -1192,7 +1005,7 @@ export class GameScene extends Phaser.Scene {
         const w = this.def.weapon;
         // Same definition the class cards quote, scaled by this run's upgrades, so
         // the number shown to the player is the number the game reasons with.
-        const dps = (classDps(this.def) * this.progress.damageMultiplier) / this.progress.fireIntervalMultiplier;
+        const dps = (classDps(this.def) * this.progression.progress.damageMultiplier) / this.progression.progress.fireIntervalMultiplier;
         const candidates = [];
         for (const view of this.enemies.values()) {
             candidates.push({ id: view.id, x: view.sprite.x, y: view.sprite.y, hp: view.hp });
@@ -1263,12 +1076,12 @@ export class GameScene extends Phaser.Scene {
             downed: this.downedFor > 0,
             respawnIn: Math.max(0, this.downedFor),
             players: this.cfg.room.squadSize,
-            chips: this.progress.chips,
+            chips: this.progression.progress.chips,
             chipsPerPowerUp: PROGRESSION.chipsPerPowerUp,
             upgrades: UPGRADE_ORDER.map((id) => ({
                 short: UPGRADES[id].short,
                 cssColour: UPGRADES[id].cssColour,
-                stacks: this.progress.stacks[id],
+                stacks: this.progression.progress.stacks[id],
             })),
             paused: this.paused,
             pausedBy: this.pausedBy,

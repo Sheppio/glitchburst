@@ -1,0 +1,316 @@
+import * as Phaser from 'phaser';
+import { WORLD } from '../config.js';
+import { PROGRESSION, PlayerProgress, UPGRADES } from '../sim/progression.js';
+import type { UpgradeId } from '../sim/progression.js';
+import type { EnemyDef } from '../sim/enemyTypes.js';
+import { clamp, dist2, hashUnit } from '../util.js';
+import type { Fx } from './fx.js';
+import { Pool } from './pool.js';
+import { TEX } from './textures.js';
+
+/** A dropped compute chip. Purely local — see `dropFrom`. */
+interface Chip {
+  sprite: Phaser.GameObjects.Image;
+  x: number;
+  y: number;
+  /** Scatter velocity from the death pop. Unused once homing. */
+  vx: number;
+  vy: number;
+  /**
+   * Latched once the chip has been inside the magnet radius. It never unlatches:
+   * a chip that starts coming to you should finish the trip even if you run on,
+   * otherwise backing off mid-pull strands it.
+   */
+  homing: boolean;
+  /** Scalar homing speed, growing under constant acceleration. */
+  speed: number;
+  ttl: number;
+  active: boolean;
+}
+
+interface PowerUp {
+  sprite: Phaser.GameObjects.Image;
+  upgrade: UpgradeId;
+  x: number;
+  y: number;
+  ttl: number;
+  active: boolean;
+}
+
+/** Where the collector is, and whether it is in a state to collect anything. */
+export interface Collector {
+  x: number;
+  y: number;
+  radius: number;
+  canCollect: boolean;
+}
+
+/**
+ * Everything this system needs from the outside world.
+ *
+ * Kept deliberately narrow — a position, four callbacks and the scene itself —
+ * so progression can be reasoned about without reading the game scene, and so
+ * the scene does not have to grow another three hundred lines to gain a
+ * feature that is only loosely coupled to it.
+ */
+export interface ProgressionHost {
+  readonly scene: Phaser.Scene;
+  readonly fx: Fx;
+  collector(): Collector;
+  award(score: number): void;
+  banner(text: string, sub?: string): void;
+  rumble(weak: number, strong: number, durationMs: number): void;
+}
+
+/**
+ * Chips, power-ups and the upgrades they buy.
+ *
+ * Split out of `GameScene`, which had grown to sixteen hundred lines covering
+ * netcode, combat, rendering and this. Progression is the cleanest seam in
+ * that class: it needs the player's position and almost nothing else, and it
+ * never touches the network at all.
+ */
+export class ProgressionSystem {
+  /** This player's run progress. Never leaves the client. */
+  readonly progress = new PlayerProgress();
+
+  readonly chips: Pool<Chip>;
+  readonly powerUps: Pool<PowerUp>;
+
+  constructor(private readonly host: ProgressionHost) {
+    this.chips = new Pool<Chip>(() => ({
+      sprite: host.scene.add.image(0, 0, TEX.chip).setDepth(12),
+      x: 0, y: 0, vx: 0, vy: 0, homing: false, speed: 0, ttl: 0, active: false,
+    }));
+
+    this.powerUps = new Pool<PowerUp>(() => ({
+      sprite: host.scene.add.image(0, 0, TEX.powerUp('damage')).setDepth(14),
+      upgrade: 'damage' as UpgradeId, x: 0, y: 0, ttl: 0, active: false,
+    }));
+  }
+
+  /** Everything a dead enemy leaves behind. */
+  dropFrom(x: number, y: number, def: EnemyDef, enemyId: string): void {
+    this.spawnChips(x, y, def.chipDrop, enemyId);
+    this.maybeDropPowerUp(x, y, def.powerUpChance, enemyId);
+  }
+
+  update(dt: number): void {
+    this.updateChips(dt);
+    this.updatePowerUps(dt);
+  }
+
+  /**
+   * Bigger malware sometimes drops a power-up outright, on top of its chips —
+   * so committing to a Trojan Tank while a wave closes in is a decision rather
+   * than a chore.
+   *
+   * The roll is a hash of the enemy id, not `Math.random`, so every client
+   * independently agrees on which corpse dropped one. The *upgrade* it offers
+   * is still rolled per player, because it is weighted against that player's
+   * own build — two players can walk to the same node and each get what their
+   * loadout is short of.
+   */
+  private maybeDropPowerUp(x: number, y: number, chance: number, enemyId: string): void {
+    if (chance <= 0 || hashUnit(enemyId) >= chance) return;
+    this.spawnPowerUp(x, y);
+  }
+
+  /* ------------------------------------------------------------ progression */
+
+  /**
+   * Drop chips where an enemy died.
+   *
+   * Chips are spawned independently on **every** client and collected purely
+   * locally — they never touch the wire. That is worth being explicit about,
+   * because the obvious alternative (host owns the loot, clients ask to pick it
+   * up) is worse in every dimension that matters here: it adds a round trip to
+   * the most tactile interaction in the game, it needs arbitration for two
+   * players reaching the same chip, and it makes pickups feel laggy on exactly
+   * the connection that is already struggling.
+   *
+   * Making them per-player costs nothing on the network (deaths are already
+   * broadcast), removes the race entirely, and is better co-op design besides:
+   * nobody competes with their squad for loot, and a player who joins a fight
+   * late is not starved of progression.
+   *
+   * The drop count is fixed per enemy kind and the scatter is derived from the
+   * enemy id, so every client independently produces the same pile.
+   */
+  private spawnChips(x: number, y: number, count: number, enemyId: string): void {
+    const seed = enemyId.charCodeAt(enemyId.length - 1) + enemyId.length;
+    // Counted once, not per chip: this used to scan (and allocate) the whole
+    // pool for every chip in the drop, making a Trojan Tank's four-chip payout
+    // quadratic in pool size.
+    let room = PROGRESSION.maxChips - this.chips.countActive();
+
+    for (let n = 0; n < count; n++) {
+      if (room-- <= 0) return;
+      const angle = (((seed * 31 + n * 97) % 360) * Math.PI) / 180;
+      const chip = this.chips.acquire();
+      chip.x = x;
+      chip.y = y;
+      // A small outward pop so a stack of four reads as four, not one.
+      chip.vx = Math.cos(angle) * 90;
+      chip.vy = Math.sin(angle) * 90;
+      chip.homing = false;
+      chip.speed = 0;
+      chip.ttl = PROGRESSION.chipTtlSec;
+      chip.active = true;
+      chip.sprite.setPosition(x, y).setVisible(true).setAlpha(1).setScale(1);
+    }
+  }
+
+  private updateChips(dt: number): void {
+    const who = this.host.collector();
+    const collectable = who.canCollect;
+
+    for (const chip of this.chips.items) {
+      if (!chip.active) continue;
+
+      chip.ttl -= dt;
+      if (chip.ttl <= 0) {
+        chip.active = false;
+        chip.sprite.setVisible(false);
+        continue;
+      }
+
+      const dx = who.x - chip.x;
+      const dy = who.y - chip.y;
+      const distance = Math.hypot(dx, dy);
+
+      if (collectable && !chip.homing && distance <= PROGRESSION.magnetRadius) {
+        chip.homing = true;
+        chip.speed = PROGRESSION.magnetInitialSpeed;
+      }
+
+      if (chip.homing && collectable) {
+        // Accelerate, never damp. This is the whole point: the player has a top
+        // speed and the chip does not, so the gap always closes. Damping here
+        // (which an earlier version applied every frame) caps the chip at
+        // accel/damping, which landed below player run speed at range — chips
+        // could simply be outrun.
+        chip.speed = Math.min(PROGRESSION.magnetMaxSpeed, chip.speed + PROGRESSION.magnetAccel * dt);
+        const step = chip.speed * dt;
+
+        // Collect on contact, or when this frame's step would carry the chip
+        // past the player — at these speeds a fast chip can cross the whole
+        // pickup radius between frames and would otherwise tunnel straight
+        // through.
+        if (distance <= PROGRESSION.pickupRadius || step >= distance) {
+          chip.active = false;
+          chip.sprite.setVisible(false);
+          this.collectChip();
+          continue;
+        }
+
+        const inv = 1 / (distance || 1);
+        chip.x += dx * inv * step;
+        chip.y += dy * inv * step;
+        chip.sprite.setPosition(chip.x, chip.y);
+      } else {
+        // Loose on the floor: let the death pop settle out.
+        chip.vx *= PROGRESSION.scatterDamping;
+        chip.vy *= PROGRESSION.scatterDamping;
+        chip.x += chip.vx * dt;
+        chip.y += chip.vy * dt;
+        chip.sprite.setPosition(chip.x, chip.y);
+
+        if (collectable && distance <= PROGRESSION.pickupRadius) {
+          chip.active = false;
+          chip.sprite.setVisible(false);
+          this.collectChip();
+          continue;
+        }
+      }
+
+      // Blink out the last couple of seconds so an expiring chip is not a surprise.
+      if (chip.ttl < 2.5) chip.sprite.setAlpha(0.35 + Math.sin(this.host.scene.time.now / 60) * 0.35);
+    }
+  }
+
+  private collectChip(): void {
+    const who = this.host.collector();
+    this.host.award(1);
+    const earned = this.progress.addChip();
+    this.host.fx.chipSpark(who.x, who.y);
+
+    if (earned) this.spawnPowerUp();
+  }
+
+  /**
+   * Drop a power-up. With no position it materialises beside the player, which
+   * is what a completed set of chips does.
+   */
+  private spawnPowerUp(atX?: number, atY?: number): void {
+    const who = this.host.collector();
+    const upgrade = this.progress.rollUpgrade();
+    if (!upgrade) {
+      // Everything is maxed; bank it as score instead of dropping a dud.
+      this.host.award(250);
+      this.host.banner('FULLY OPTIMISED', '+250');
+      return;
+    }
+
+    const angle = Math.random() * Math.PI * 2;
+    const fromKill = atX !== undefined && atY !== undefined;
+    const originX = fromKill ? atX : who.x + Math.cos(angle) * PROGRESSION.spawnRadius;
+    const originY = fromKill ? atY : who.y + Math.sin(angle) * PROGRESSION.spawnRadius;
+
+    const powerUp = this.powerUps.acquire();
+    powerUp.upgrade = upgrade;
+    powerUp.x = clamp(originX, 40, WORLD.width - 40);
+    powerUp.y = clamp(originY, 40, WORLD.height - 40);
+    powerUp.ttl = PROGRESSION.powerUpTtlSec;
+    powerUp.active = true;
+    powerUp.sprite
+      .setTexture(TEX.powerUp(upgrade))
+      .setPosition(powerUp.x, powerUp.y)
+      .setVisible(true)
+      .setAlpha(1)
+      .setScale(0.2);
+
+    this.host.scene.tweens.add({ targets: powerUp.sprite, scale: 1, duration: 320, ease: 'Back.easeOut' });
+    this.host.fx.ring(powerUp.x, powerUp.y, 90, UPGRADES[upgrade].colour, 420);
+    this.host.banner(fromKill ? 'RARE DROP' : 'POWER-UP READY', UPGRADES[upgrade].name);
+  }
+
+  private updatePowerUps(dt: number): void {
+    const who = this.host.collector();
+    for (const powerUp of this.powerUps.items) {
+      if (!powerUp.active) continue;
+
+      powerUp.ttl -= dt;
+      if (powerUp.ttl <= 0) {
+        powerUp.active = false;
+        powerUp.sprite.setVisible(false);
+        continue;
+      }
+
+      // Bob and spin: a stationary hexagon on a static floor is easy to miss.
+      powerUp.sprite.setY(powerUp.y + Math.sin(this.host.scene.time.now / 260) * 5);
+      powerUp.sprite.setRotation(Math.sin(this.host.scene.time.now / 700) * 0.22);
+      if (powerUp.ttl < 4) powerUp.sprite.setAlpha(0.4 + Math.sin(this.host.scene.time.now / 80) * 0.4);
+
+      if (!who.canCollect) continue;
+      const reach = PROGRESSION.powerUpPickupRadius + who.radius;
+      if (dist2(who.x, who.y, powerUp.x, powerUp.y) > reach * reach) continue;
+
+      powerUp.active = false;
+      powerUp.sprite.setVisible(false);
+      this.applyUpgrade(powerUp.upgrade);
+    }
+  }
+
+  private applyUpgrade(id: UpgradeId): void {
+    const who = this.host.collector();
+    const def = UPGRADES[id];
+    if (!this.progress.grant(id)) return;
+
+    this.host.fx.ring(who.x, who.y, 150, def.colour, 480);
+    this.host.fx.upgradeText(who.x, who.y - 40, def.blurb, def.colour);
+    this.host.banner(def.name.toUpperCase(), `${def.blurb} · ${this.progress.stacks[id]} stacks`);
+    this.host.scene.cameras.main.flash(140, 255, 255, 255, false);
+    this.host.rumble(0.5, 0.3, 130);
+  }
+}

@@ -187,8 +187,8 @@ await step('broadcast rate survives a starved renderer', async () => {
 await step('killed enemies drop chips', async () => {
   const dropped = await page.evaluate(async () => {
     const scene = window.glitchburst.game.scene.getScene('game');
-    const before = scene.chips.items.filter((c) => c.active).length;
-    const banked = scene.progress.totalChips;
+    const before = scene.progression.chips.items.filter((c) => c.active).length;
+    const banked = scene.progression.progress.totalChips;
 
     // Kill enemies well away from the player, or the magnet collects the chips
     // inside the sampling window and the floor looks empty.
@@ -204,9 +204,9 @@ await step('killed enemies drop chips', async () => {
     await new Promise((r) => setTimeout(r, 500));
     return {
       before,
-      after: scene.chips.items.filter((c) => c.active).length,
+      after: scene.progression.chips.items.filter((c) => c.active).length,
       killed: ids.length,
-      collected: scene.progress.totalChips - banked,
+      collected: scene.progression.progress.totalChips - banked,
     };
   });
   return {
@@ -218,7 +218,7 @@ await step('killed enemies drop chips', async () => {
 await step('chips are drawn to the player and collected', async () => {
   const result = await page.evaluate(async () => {
     const scene = window.glitchburst.game.scene.getScene('game');
-    const chip = scene.chips.items.find((c) => c.active);
+    const chip = scene.progression.chips.items.find((c) => c.active);
     if (!chip) return { ok: false, why: 'no chip on the floor' };
     // Drop one just outside the pickup radius but inside the magnet radius.
     chip.x = scene.me.x + 120;
@@ -226,16 +226,16 @@ await step('chips are drawn to the player and collected', async () => {
     chip.vx = 0;
     chip.vy = 0;
     chip.ttl = 20;
-    const banked = scene.progress.totalChips;
+    const banked = scene.progression.progress.totalChips;
 
     // Poll, for the same reason as the point-blank test: a fixed wall-clock
     // sleep measures the renderer, not the game, once dt clamping kicks in.
     const start = performance.now();
-    while (performance.now() - start < 2500 && scene.progress.totalChips === banked) {
+    while (performance.now() - start < 2500 && scene.progression.progress.totalChips === banked) {
       await new Promise((r) => requestAnimationFrame(r));
     }
     return {
-      ok: scene.progress.totalChips > banked,
+      ok: scene.progression.progress.totalChips > banked,
       ms: Math.round(performance.now() - start),
       why: 'never collected',
     };
@@ -250,19 +250,19 @@ await step('a chip cannot be outrun', async () => {
     // Drop a chip behind the player, then sprint directly away from it faster
     // than any class can actually move. Constant acceleration has to win.
     const away = scene.me.y > 800 ? -1 : 1;
-    scene.spawnChips(scene.me.x, scene.me.y - away * 150, 1, 'outrun-probe');
+    scene.progression.spawnChips(scene.me.x, scene.me.y - away * 150, 1, 'outrun-probe');
 
-    const banked = scene.progress.totalChips;
+    const banked = scene.progression.progress.totalChips;
     const runSpeed = 320; // above every class's top speed
     const start = performance.now();
 
-    while (performance.now() - start < 2500 && scene.progress.totalChips === banked) {
+    while (performance.now() - start < 2500 && scene.progression.progress.totalChips === banked) {
       await new Promise((r) => requestAnimationFrame(r));
       scene.me.y = Math.max(40, Math.min(1560, scene.me.y + (away * runSpeed) / 60));
     }
 
     return {
-      collected: scene.progress.totalChips > banked,
+      collected: scene.progression.progress.totalChips > banked,
       ms: Math.round(performance.now() - start),
     };
   });
@@ -319,13 +319,13 @@ await step('a point-blank enemy is still hittable', async () => {
 await step('a full set of chips converts into a power-up', async () => {
   const out = await page.evaluate(async () => {
     const scene = window.glitchburst.game.scene.getScene('game');
-    const need = scene.progress.chips;
+    const need = scene.progression.progress.chips;
     const perSet = window.glitchburst.game.registry.get('chipsPerPowerUp') ?? 10;
-    for (let i = 0; i < perSet - need; i++) scene.collectChip();
+    for (let i = 0; i < perSet - need; i++) scene.progression.collectChip();
     await new Promise((r) => setTimeout(r, 300));
     return {
-      powerUps: scene.powerUps.items.filter((p) => p.active).length,
-      chips: scene.progress.chips,
+      powerUps: scene.progression.powerUps.items.filter((p) => p.active).length,
+      chips: scene.progression.progress.chips,
     };
   });
   return { ok: out.powerUps > 0, note: `${out.powerUps} power-up spawned, counter back to ${out.chips}` };
@@ -334,22 +334,22 @@ await step('a full set of chips converts into a power-up', async () => {
 await step('collecting a power-up upgrades the player', async () => {
   const out = await page.evaluate(async () => {
     const scene = window.glitchburst.game.scene.getScene('game');
-    const powerUp = scene.powerUps.items.find((p) => p.active);
+    const powerUp = scene.progression.powerUps.items.find((p) => p.active);
     if (!powerUp) return { ok: false, why: 'no power-up present' };
-    const before = { ...scene.progress.stacks };
-    const dmg = scene.progress.damageMultiplier;
-    const spd = scene.progress.speedMultiplier;
-    const rof = scene.progress.fireIntervalMultiplier;
+    const before = { ...scene.progression.progress.stacks };
+    const dmg = scene.progression.progress.damageMultiplier;
+    const spd = scene.progression.progress.speedMultiplier;
+    const rof = scene.progression.progress.fireIntervalMultiplier;
     // Walk it onto the player.
     powerUp.x = scene.me.x;
     powerUp.y = scene.me.y;
     await new Promise((r) => setTimeout(r, 300));
-    const after = scene.progress.stacks;
+    const after = scene.progression.progress.stacks;
     const gained = Object.keys(after).find((k) => after[k] > before[k]);
     const changed =
-      scene.progress.damageMultiplier !== dmg ||
-      scene.progress.speedMultiplier !== spd ||
-      scene.progress.fireIntervalMultiplier !== rof;
+      scene.progression.progress.damageMultiplier !== dmg ||
+      scene.progression.progress.speedMultiplier !== spd ||
+      scene.progression.progress.fireIntervalMultiplier !== rof;
     return { ok: Boolean(gained) && changed, why: gained ?? 'no stack gained', gained };
   });
   return { ok: out.ok, note: out.ok ? `gained a ${out.gained} stack` : out.why };
