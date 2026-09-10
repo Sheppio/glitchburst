@@ -1,14 +1,14 @@
 import * as Phaser from 'phaser';
 import { HORDE, NET, RENDER, WORLD } from '../config.js';
 import { HAPTIC } from '../input/settings.js';
-import { decodeEvents, decodeField, decodeHorde, decodePlayer, encodeDamage, encodeEvents, encodeField, encodeHorde, encodePlayer, } from '../net/codec.js';
+import { decodeEvents, decodeField, decodeHorde, decodePause, decodePlayer, encodeDamage, encodeEvents, encodeField, encodeHorde, encodePause, encodePlayer, } from '../net/codec.js';
 import { Topics, segment } from '../net/topics.js';
 import { CLASSES } from '../sim/classes.js';
 import { ENEMY_DEFS } from '../sim/enemyTypes.js';
 import { HordeEngine } from '../sim/HordeEngine.js';
 import { EnemyKind, FLAG_ABILITY, FLAG_DOWN, FLAG_FIRING } from '../types.js';
 import { clamp, counterId, dist2 } from '../util.js';
-import { Fx } from './fx.js';
+import { DAMAGE_RED, Fx } from './fx.js';
 import { glide, smoothing } from './lerp.js';
 import { TEX } from './textures.js';
 /**
@@ -52,6 +52,15 @@ export class GameScene extends Phaser.Scene {
         lastSeen: 0,
     };
     fx;
+    /**
+     * Every enemy health bar, drawn into one Graphics object.
+     *
+     * A hundred enemies with two sprites each would be two hundred game objects
+     * to position every frame; one Graphics redrawn per frame is a single object
+     * and, because bars only appear on damaged enemies, usually a handful of
+     * rectangles.
+     */
+    healthBars;
     horde = null;
     enemies = new Map();
     remotes = new Map();
@@ -66,6 +75,8 @@ export class GameScene extends Phaser.Scene {
     score = 0;
     snapshotTick = 0;
     lastWave = 0;
+    paused = false;
+    pausedBy = '';
     /**
      * Host simulation timer.
      *
@@ -111,10 +122,13 @@ export class GameScene extends Phaser.Scene {
         this.playerAura = this.add
             .image(this.me.x, this.me.y, TEX.glow)
             .setTint(this.def.colour)
-            .setBlendMode(Phaser.BlendModes.ADD)
+            // Normal, not additive: additive light over a white arena is a no-op.
+            .setBlendMode(Phaser.BlendModes.NORMAL)
             .setScale(0.85)
             .setDepth(8);
         this.player = this.add.image(this.me.x, this.me.y, TEX.player(classId)).setDepth(30);
+        // Above the enemies, below the bullets.
+        this.healthBars = this.add.graphics().setDepth(22);
         this.cameras.main
             .setBounds(0, 0, WORLD.width, WORLD.height)
             .startFollow(this.player, true, 0.12, 0.12)
@@ -126,15 +140,27 @@ export class GameScene extends Phaser.Scene {
         room.hostStatsProvider = () => ({
             enemyCount: this.horde?.enemyCount ?? this.enemies.size,
             wave: this.horde?.waveNumber ?? this.lastWave,
+            paused: this.paused,
         });
-        this.unsubs.push(room.events.on('hostChange', ({ isHost, reason }) => this.onHostChange(isHost, reason)), room.events.on('hostStats', ({ wave }) => {
+        this.unsubs.push(room.events.on('hostChange', ({ isHost, reason }) => this.onHostChange(isHost, reason)), room.events.on('hostStats', ({ wave, paused }) => {
             this.lastWave = wave;
+            // A client that joined mid-pause, or missed the pause message, syncs here.
+            if (!this.cfg.room.isHost && paused !== this.paused)
+                this.applyPause(paused, this.pausedBy);
         }), room.events.on('peerLeave', ({ id }) => this.removeRemote(id)));
         if (room.isHost)
             this.onHostChange(true, 'initial');
+        window.addEventListener('keydown', this.onKeyDown);
         this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.teardown());
     }
     update(_time, delta) {
+        // Read pause input first: it is the one control that must keep working
+        // while everything else is frozen.
+        this.pollPauseInput();
+        if (this.paused) {
+            this.pushHud();
+            return;
+        }
         const dt = Math.min(delta, 50) / 1000;
         this.updateLocalPlayer(dt);
         this.updateBullets(dt);
@@ -143,6 +169,7 @@ export class GameScene extends Phaser.Scene {
         // Enemy motion is interpolated identically whether this client is the host
         // or a peer: the host's own simulation only refreshes targets at 20Hz too.
         this.interpolateEnemies(delta);
+        this.drawHealthBars();
         this.updateRemotes(delta);
         this.flushDamage(dt);
         this.publishPlayer(dt);
@@ -286,18 +313,33 @@ export class GameScene extends Phaser.Scene {
                 b.hit.add(enemy.id);
                 this.reportDamage(enemy.id, b.damage);
                 this.fx.hitSpark(b.x, b.y, ENEMY_DEFS[enemy.kind].colour);
-                this.fx.damageNumber(enemy.sprite.x, enemy.sprite.y - 14, b.damage, ENEMY_DEFS[enemy.kind].colour);
-                // Predict the health bar locally so the hit reads instantly; the host's
+                this.fx.damageNumber(enemy.sprite.x, enemy.sprite.y - 16, b.damage);
+                // Predict the health locally so the hit reads instantly; the host's
                 // next snapshot is authoritative and will correct it 50 ms later.
                 enemy.hp = Math.max(0, enemy.hp - b.damage);
-                enemy.sprite.setScale(1.18);
-                this.tweens.add({ targets: enemy.sprite, scale: 1, duration: 110 });
+                this.flashEnemy(enemy);
                 if (--b.pierce <= 0) {
                     this.retireBullet(b);
                     break;
                 }
             }
         }
+    }
+    /**
+     * Hit feedback: punch the sprite up in scale and flash it solid red for a
+     * few frames. `setTintFill` replaces the sprite's colour entirely rather
+     * than multiplying it, which is what makes the flash read instantly even on
+     * a dark violet Trojan Tank.
+     */
+    flashEnemy(enemy) {
+        enemy.sprite.setTintFill(DAMAGE_RED);
+        enemy.sprite.setScale(1.22);
+        this.tweens.add({ targets: enemy.sprite, scale: 1, duration: 130, ease: 'Cubic.easeOut' });
+        this.time.delayedCall(80, () => {
+            // The enemy may have died and been destroyed inside this window.
+            if (enemy.sprite.scene)
+                enemy.sprite.clearTint();
+        });
     }
     /** Coalesced so a shotgun blast is one message per enemy, not one per pellet. */
     reportDamage(enemyId, amount) {
@@ -367,7 +409,7 @@ export class GameScene extends Phaser.Scene {
         if (this.downedFor > 0)
             return;
         this.me.hp = Math.max(0, this.me.hp - amount);
-        this.fx.damageNumber(this.me.x, this.me.y - 24, amount, 0xff2d95);
+        this.fx.damageNumber(this.me.x, this.me.y - 26, amount);
         this.cameras.main.shake(120, 0.006);
         this.cameras.main.flash(90, 255, 60, 120, false);
         // Requirement: rumble when the local player takes damage.
@@ -411,6 +453,12 @@ export class GameScene extends Phaser.Scene {
         const now = performance.now();
         const dt = Math.min(now - this.lastHostStepAt, 100) / 1000;
         this.lastHostStepAt = now;
+        if (this.paused) {
+            // Keep broadcasting the frozen horde so a client joining mid-pause still
+            // materialises it — the positions simply stop changing.
+            this.cfg.net.publish(Topics.hordePositions(this.cfg.room.roomId), encodeHorde(horde.enemies.values()));
+            return;
+        }
         const result = horde.step(dt, this.aiTargets());
         // Mirror the authoritative state into the local views. Positions go to the
         // view's *target*, not the sprite — the host interpolates its own horde on
@@ -460,6 +508,47 @@ export class GameScene extends Phaser.Scene {
             return;
         window.clearInterval(this.hostTimer);
         this.hostTimer = 0;
+    }
+    /* ----------------------------------------------------------------- pause */
+    /**
+     * Host-authoritative pause.
+     *
+     * Pausing is a property of the *room*, not of a client, because the horde
+     * only exists on one machine: a peer that stopped rendering locally would
+     * still be walked into by enemies the host kept simulating. So the host owns
+     * the flag, broadcasts it, and stops stepping — and every other client
+     * freezes because the snapshots stop changing.
+     */
+    togglePause() {
+        if (!this.cfg.room.isHost)
+            return;
+        this.setPaused(!this.paused);
+    }
+    setPaused(paused) {
+        if (!this.cfg.room.isHost || this.paused === paused)
+            return;
+        this.applyPause(paused, this.me.name);
+        this.cfg.net.publish(Topics.pause(this.cfg.room.roomId), encodePause(paused, this.me.id, this.me.name));
+    }
+    applyPause(paused, byName) {
+        this.paused = paused;
+        this.pausedBy = byName;
+        if (paused) {
+            // Silence the sticks so a held direction does not queue up movement that
+            // fires the instant the game resumes.
+            this.cfg.input.update({ x: 0, y: 0 }, this.me);
+        }
+        else {
+            // Resuming after a long pause must not hand the simulation a huge dt.
+            this.lastHostStepAt = performance.now();
+        }
+    }
+    /** Escape on a keyboard, Start/Options on a pad. Host only. */
+    pollPauseInput() {
+        if (!this.cfg.room.isHost)
+            return;
+        if (this.cfg.input.gamepad.readNav().menu)
+            this.togglePause();
     }
     /** Players plus decoys. Decoys carry a priority multiplier the AI divides by. */
     aiTargets() {
@@ -525,6 +614,34 @@ export class GameScene extends Phaser.Scene {
         }
     }
     /**
+     * Health bars, drawn only for enemies that have actually been hurt.
+     *
+     * A bar over every enemy would be noise — at the cap that is a hundred of
+     * them, and the thing a player wants to spot is the one that is nearly dead.
+     * Hiding bars at full health makes a visible bar *mean* something: it marks a
+     * target worth finishing, and it makes focus fire legible in a four-player
+     * squad where someone else has already softened something up.
+     */
+    drawHealthBars() {
+        const g = this.healthBars;
+        g.clear();
+        for (const view of this.enemies.values()) {
+            if (view.maxHp <= 0 || view.hp >= view.maxHp)
+                continue;
+            const def = ENEMY_DEFS[view.kind];
+            const ratio = clamp(view.hp / view.maxHp, 0, 1);
+            const width = Math.max(24, def.radius * 1.9);
+            const height = 4;
+            const x = view.sprite.x - width / 2;
+            const y = view.sprite.y - def.radius - 11;
+            // Dark surround first: on a white arena a bar needs an edge, not a glow.
+            g.fillStyle(0x0b1017, 0.85).fillRect(x - 1.5, y - 1.5, width + 3, height + 3);
+            g.fillStyle(0xffffff, 0.95).fillRect(x, y, width, height);
+            g.fillStyle(ratio > 0.6 ? 0x4caf00 : ratio > 0.3 ? 0xff9f00 : DAMAGE_RED, 1);
+            g.fillRect(x, y, width * ratio, height);
+        }
+    }
+    /**
      * Unpack a batched horde snapshot.
      *
      * Note the spawn-on-sight rule (requirement 2): an id this client has never
@@ -544,6 +661,10 @@ export class GameScene extends Phaser.Scene {
             view.tx = snap.x;
             view.ty = snap.y;
             view.hp = snap.hp;
+            // Max health is not on the wire — enemy health scales with wave and squad
+            // size, so a peer infers it from the highest value it has seen. Exact for
+            // any enemy the peer watched spawn; briefly optimistic for one that was
+            // already damaged when this client joined, which self-corrects upward.
             if (snap.hp > view.maxHp)
                 view.maxHp = snap.hp;
             view.seen = this.snapshotTick;
@@ -595,6 +716,12 @@ export class GameScene extends Phaser.Scene {
             const amount = Number(amountText);
             if (Number.isFinite(amount))
                 this.horde.reportDamage(enemyId, amount, attacker ?? '?');
+        }), net.subscribe(Topics.pause(id), (_t, payload) => {
+            const msg = decodePause(payload);
+            // Only the acting host may pause the room; ignore anyone else.
+            if (!msg || msg.byId === this.me.id || msg.byId !== this.cfg.room.hostId)
+                return;
+            this.applyPause(msg.paused, msg.byName);
         }), net.subscribe(Topics.ability(id), (_t, payload) => {
             const field = decodeField(payload);
             if (field && field.owner !== this.me.id)
@@ -616,7 +743,7 @@ export class GameScene extends Phaser.Scene {
             .setTint(colour)
             .setDepth(6)
             .setAlpha(0.75)
-            .setBlendMode(Phaser.BlendModes.ADD);
+            .setBlendMode(Phaser.BlendModes.NORMAL);
         if (field.kind === 'heal')
             sprite.setScale((field.radius * 2) / 128);
         this.fields.set(field.id, { ...field, sprite });
@@ -688,7 +815,7 @@ export class GameScene extends Phaser.Scene {
             const aura = this.add
                 .image(state.x, state.y, TEX.glow)
                 .setTint(def.colour)
-                .setBlendMode(Phaser.BlendModes.ADD)
+                .setBlendMode(Phaser.BlendModes.NORMAL)
                 .setScale(0.7)
                 .setDepth(7)
                 .setAlpha(0.2);
@@ -749,7 +876,7 @@ export class GameScene extends Phaser.Scene {
         if (free)
             return free;
         const bullet = {
-            sprite: this.add.image(0, 0, TEX.bullet).setDepth(25).setBlendMode(Phaser.BlendModes.ADD),
+            sprite: this.add.image(0, 0, TEX.bullet).setDepth(25),
             x: 0, y: 0, vx: 0, vy: 0, life: 0, damage: 0, pierce: 1, radius: 5, knockback: 0,
             hit: new Set(), active: false,
         };
@@ -814,6 +941,9 @@ export class GameScene extends Phaser.Scene {
             downed: this.downedFor > 0,
             respawnIn: Math.max(0, this.downedFor),
             players: this.cfg.room.squadSize,
+            paused: this.paused,
+            pausedBy: this.pausedBy,
+            canPause: this.cfg.room.isHost,
             squad,
         });
     }
@@ -841,7 +971,16 @@ export class GameScene extends Phaser.Scene {
             trace.strokePath();
         }
     }
+    onKeyDown = (e) => {
+        if (e.key !== 'Escape' && e.code !== 'KeyP')
+            return;
+        if (e.target instanceof HTMLInputElement)
+            return;
+        e.preventDefault();
+        this.togglePause();
+    };
     teardown() {
+        window.removeEventListener('keydown', this.onKeyDown);
         this.stopHostLoop();
         for (const unsub of this.unsubs)
             unsub();

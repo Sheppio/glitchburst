@@ -92,20 +92,28 @@ function drawGrid(scene: Phaser.Scene): void {
 
 function drawBullets(scene: Phaser.Scene): void {
   const g = scene.make.graphics({ x: 0, y: 0 }, false);
-  // Player round: a bright capsule with a white-hot core, drawn pointing right.
-  g.fillStyle(0xffffff, 0.35).fillRoundedRect(0, 2, 26, 10, 5);
-  g.fillStyle(0xffffff, 1).fillRoundedRect(4, 4, 18, 6, 3);
-  g.generateTexture(TEX.bullet, 26, 14);
+
+  // Player round. Drawn pointing right, and built around a dark rim rather than
+  // a glow: this arena is white, so a bright bullet has nothing to be brighter
+  // than. Tint multiplies, so the rim stays dark whatever colour the class is
+  // while the body takes the class colour at full saturation.
+  g.fillStyle(0x0b1017, 0.92).fillRoundedRect(0, 0, 32, 15, 7);
+  g.fillStyle(0xffffff, 1).fillRoundedRect(2, 2, 28, 11, 5);
+  // Darker tail and lighter nose give it a direction of travel.
+  g.fillStyle(0x0b1017, 0.22).fillRoundedRect(2, 2, 9, 11, 5);
+  g.generateTexture(TEX.bullet, 32, 15);
   g.clear();
 
-  // Enemy round: a hollow diamond, so it reads as hostile at a glance.
-  g.fillStyle(0xffffff, 0.3).fillCircle(9, 9, 9);
+  // Enemy round: a hollow diamond with the same dark rim, so it reads as
+  // hostile at a glance and never disappears into the floor.
+  g.fillStyle(0x0b1017, 0.92).fillCircle(11, 11, 10);
   g.fillStyle(0xffffff, 1);
   g.beginPath();
-  g.moveTo(9, 1).lineTo(17, 9).lineTo(9, 17).lineTo(1, 9);
+  g.moveTo(11, 2).lineTo(20, 11).lineTo(11, 20).lineTo(2, 11);
   g.closePath();
   g.fillPath();
-  g.generateTexture(TEX.enemyBullet, 18, 18);
+  g.fillStyle(0x0b1017, 0.75).fillCircle(11, 11, 3);
+  g.generateTexture(TEX.enemyBullet, 22, 22);
   g.destroy();
 }
 

@@ -183,16 +183,41 @@ export function decodePresence(id: string, payload: string): PresenceMsg | null 
 
 /* ------------------------------------------------------------- heartbeat */
 
-export function encodeHeartbeat(hostId: string, seq: number, enemyCount: number, wave: number): string {
-  return [hostId, seq, enemyCount, wave].join(FLD);
+export function encodeHeartbeat(
+  hostId: string,
+  seq: number,
+  enemyCount: number,
+  wave: number,
+  paused: boolean,
+): string {
+  return [hostId, seq, enemyCount, wave, paused ? 1 : 0].join(FLD);
 }
 
 export function decodeHeartbeat(
   payload: string,
-): { hostId: string; seq: number; enemyCount: number; wave: number } | null {
+): { hostId: string; seq: number; enemyCount: number; wave: number; paused: boolean } | null {
   const f = payload.split(FLD);
   if (f.length < 4) return null;
-  return { hostId: f[0]!, seq: num(f[1]!), enemyCount: num(f[2]!), wave: num(f[3]!) };
+  // The pause flag is a later addition, so it is read optionally: a client on
+  // an older build still produces a valid heartbeat, it just never pauses.
+  return {
+    hostId: f[0]!,
+    seq: num(f[1]!),
+    enemyCount: num(f[2]!),
+    wave: num(f[3]!),
+    paused: f.length > 4 && num(f[4]!) === 1,
+  };
+}
+
+/** Host -> room: `1|0,hostId,displayName`. */
+export function encodePause(paused: boolean, byId: string, byName: string): string {
+  return [paused ? 1 : 0, byId, sanitizeName(byName)].join(FLD);
+}
+
+export function decodePause(payload: string): { paused: boolean; byId: string; byName: string } | null {
+  const f = payload.split(FLD);
+  if (f.length < 3) return null;
+  return { paused: num(f[0]!) === 1, byId: f[1]!, byName: f[2]! };
 }
 
 /* ------------------------------------------------------------------ misc */

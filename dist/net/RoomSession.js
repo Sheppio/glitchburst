@@ -35,7 +35,11 @@ export class RoomSession {
     joined = false;
     announcedFull = false;
     /** Set by the game each tick so the heartbeat can carry live stats. */
-    hostStatsProvider = () => ({ enemyCount: 0, wave: 0 });
+    hostStatsProvider = () => ({
+        enemyCount: 0,
+        wave: 0,
+        paused: false,
+    });
     constructor(net, roomId, playerId, name, cls) {
         this.net = net;
         this.roomId = roomId;
@@ -150,7 +154,9 @@ export class RoomSession {
         if (hb.hostId === this.playerId)
             return;
         this.lastHostBeat = performance.now();
-        this.events.emit('hostStats', { enemyCount: hb.enemyCount, wave: hb.wave });
+        // Carries the pause flag, so a client joining a paused room learns about it
+        // within one heartbeat instead of running while everyone else is frozen.
+        this.events.emit('hostStats', { enemyCount: hb.enemyCount, wave: hb.wave, paused: hb.paused });
         // Split brain: the lower id always wins, so step down immediately.
         if (this._isHost && hb.hostId < this.playerId) {
             this._isHost = false;
@@ -168,7 +174,7 @@ export class RoomSession {
         if (!this._isHost || !this.joined)
             return;
         const stats = this.hostStatsProvider();
-        this.net.publish(Topics.hostBeat(this.roomId), encodeHeartbeat(this.playerId, ++this.beatSeq, stats.enemyCount, stats.wave));
+        this.net.publish(Topics.hostBeat(this.roomId), encodeHeartbeat(this.playerId, ++this.beatSeq, stats.enemyCount, stats.wave, stats.paused));
     }
     tick() {
         if (!this.joined)

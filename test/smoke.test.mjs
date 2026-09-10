@@ -162,6 +162,30 @@ await step('broadcast rate survives a starved renderer', async () => {
   };
 });
 
+const positions = () => page.evaluate(() => {
+  const scene = window.glitchburst.game.scene.getScene('game');
+  return [...scene.enemies.values()].map((v) => `${Math.round(v.sprite.x)},${Math.round(v.sprite.y)}`).join('|');
+});
+
+await step('host can pause the whole room', async () => {
+  await page.click('#btn-pause');
+  await page.waitForTimeout(400);
+  const before = await positions();
+  await page.waitForTimeout(900);
+  const after = await positions();
+  const veiled = await page.isVisible('#pause-veil');
+  return { ok: veiled && before === after && before.length > 0, note: veiled ? 'horde frozen behind the veil' : 'no veil' };
+});
+
+await step('resuming restarts the simulation', async () => {
+  await page.click('#btn-resume');
+  await page.waitForTimeout(150);
+  const before = await positions();
+  await page.waitForTimeout(700);
+  const after = await positions();
+  return { ok: before !== after && !(await page.isVisible('#pause-veil')), note: 'horde moving again' };
+});
+
 await step('no uncaught errors', async () => ({ ok: errors.length === 0, note: errors.slice(0, 4).join(' | ') || 'clean' }));
 
 await page.screenshot({ path: 'test/rig/gameplay.png', animations: 'disabled', timeout: 15000 });

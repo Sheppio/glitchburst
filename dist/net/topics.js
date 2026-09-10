@@ -24,6 +24,8 @@ export const Topics = {
     enemyDamageAll: (r) => `${root}/room/${r}/enemy/+/damage`,
     /** Class abilities that other clients must see (decoys, heal fields, shockwaves). */
     ability: (r) => `${root}/room/${r}/ability`,
+    /** Host-authoritative pause. Freezes the horde for the whole room. */
+    pause: (r) => `${root}/room/${r}/pause`,
 };
 /** Pull the wildcard segment out of a concrete topic, e.g. the enemy id from `.../enemy/7a/damage`. */
 export function segment(topic, indexFromEnd) {

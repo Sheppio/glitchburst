@@ -121,6 +121,9 @@ export class KeyboardMouseSource implements InputSource {
 
   private onPointerDown = (e: PointerEvent): void => {
     if (e.pointerType === 'touch' || e.button !== 0) return;
+    // Clicks on the HUD are UI, not weapon fire. Without this, pressing Leave
+    // or an assist chip also discharges the gun.
+    if (e.target instanceof Element && e.target.closest('button, input, select, .class-card')) return;
     this.pointerX = e.clientX;
     this.pointerY = e.clientY;
     this.pointerDown = true;

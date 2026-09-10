@@ -34,6 +34,9 @@ export const Topics = {
 
   /** Class abilities that other clients must see (decoys, heal fields, shockwaves). */
   ability: (r: RoomId) => `${root}/room/${r}/ability`,
+
+  /** Host-authoritative pause. Freezes the horde for the whole room. */
+  pause: (r: RoomId) => `${root}/room/${r}/pause`,
 } as const;
 
 /** Pull the wildcard segment out of a concrete topic, e.g. the enemy id from `.../enemy/7a/damage`. */

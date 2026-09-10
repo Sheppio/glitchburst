@@ -4,6 +4,9 @@ import { TEX } from './textures.js';
 
 const MONO = '"JetBrains Mono", "SF Mono", Menlo, Consolas, monospace';
 
+/** One colour means "something took damage", regardless of what was hit. */
+export const DAMAGE_RED = 0xe6003c;
+
 /**
  * Everything that makes a kill feel good: pixel bursts, leaked data strings,
  * damage numbers, muzzle flashes and ability rings.
@@ -38,22 +41,34 @@ export class Fx {
 
   /** Small spark where a bullet connects, before the enemy is confirmed dead. */
   hitSpark(x: number, y: number, colour: number): void {
-    this.emitterFor(colour).explode(4, x, y);
+    this.emitterFor(colour).explode(5, x, y);
+    this.emitterFor(DAMAGE_RED).explode(4, x, y);
   }
 
-  damageNumber(x: number, y: number, amount: number, colour: number): void {
-    this.floatText(x, y, `-${Math.round(amount)}`, colour, 13, 620);
+  /**
+   * Damage taken by anything, in red.
+   *
+   * Deliberately not the enemy's own colour, which is what this used to do:
+   * tying the number to the target made damage read as decoration rather than
+   * as a distinct event, and an amber number over an amber drone was nearly
+   * invisible. One colour for "damage", always, with a white outline so it
+   * stays legible over sprites, grid lines and other numbers.
+   */
+  damageNumber(x: number, y: number, amount: number): void {
+    this.floatText(x, y, `-${Math.round(amount)}`, DAMAGE_RED, 17, 700, '#ffffff');
   }
 
   healNumber(x: number, y: number, amount: number): void {
-    this.floatText(x, y, `+${Math.round(amount)}`, 0x7cff00, 13, 620);
+    this.floatText(x, y, `+${Math.round(amount)}`, 0x3fae00, 15, 620, '#ffffff');
   }
 
   muzzleFlash(x: number, y: number, angle: number, colour: number): void {
     const flash = this.scene.add
       .image(x, y, TEX.glow)
       .setTint(colour)
-      .setBlendMode(Phaser.BlendModes.ADD)
+      // NOT additive: the arena is white, so adding light to it produces
+      // nothing. Normal alpha over white reads as a soft colour wash instead.
+      .setBlendMode(Phaser.BlendModes.NORMAL)
       .setDepth(this.depth - 1)
       .setScale(0.28)
       .setRotation(angle);
@@ -72,7 +87,7 @@ export class Fx {
     const ring = this.scene.add
       .image(x, y, TEX.ring)
       .setTint(colour)
-      .setBlendMode(Phaser.BlendModes.ADD)
+      .setBlendMode(Phaser.BlendModes.NORMAL)
       .setDepth(this.depth)
       .setScale(0.15)
       .setAlpha(0.95);
@@ -133,7 +148,15 @@ export class Fx {
 
   /* ------------------------------------------------------------- internals */
 
-  private floatText(x: number, y: number, value: string, colour: number, size: number, duration: number): void {
+  private floatText(
+    x: number,
+    y: number,
+    value: string,
+    colour: number,
+    size: number,
+    duration: number,
+    stroke?: string,
+  ): void {
     const label = this.takeText();
     label
       .setText(value)
@@ -144,6 +167,9 @@ export class Fx {
       .setScale(1)
       .setVisible(true)
       .setActive(true);
+
+    if (stroke) label.setStroke(stroke, 4);
+    else label.setStroke('', 0);
 
     this.scene.tweens.add({
       targets: label,

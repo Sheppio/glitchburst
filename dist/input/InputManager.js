@@ -27,18 +27,33 @@ export class InputManager {
     scheme = 'kbm';
     lastAim = 0;
     abilityWasDown = false;
+    /**
+     * The on-screen sticks are a full-screen overlay, so they must exist only
+     * while a match is running. Left enabled on the front end they sit on top of
+     * the menu and silently swallow every tap — the buttons look fine and simply
+     * never respond.
+     */
+    inGame = false;
     constructor(host, settings) {
         this.settings = settings;
         this.keyboard = new KeyboardMouseSource(host);
         this.gamepad = new GamepadSource();
         this.touch = new TouchSource(host);
         this.sources = [this.keyboard, this.gamepad, this.touch];
-        this.touch.setEnabled(settings.current.forceTouchControls);
         this.touch.setSouthpaw(settings.current.southpaw);
         settings.events.on('change', ({ settings: s }) => {
-            this.touch.setEnabled(s.forceTouchControls);
+            this.syncTouchLayer();
             this.touch.setSouthpaw(s.southpaw);
         });
+        this.syncTouchLayer();
+    }
+    /** Called when a match starts and ends. Gates the on-screen stick overlay. */
+    setInGame(inGame) {
+        this.inGame = inGame;
+        this.syncTouchLayer();
+    }
+    syncTouchLayer() {
+        this.touch.setEnabled(this.inGame && this.settings.current.forceTouchControls);
     }
     get activeScheme() {
         return this.scheme;

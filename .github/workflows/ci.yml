@@ -61,7 +61,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [smoke, multiplayer]
+        suite: [smoke, mobile, multiplayer]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5

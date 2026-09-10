@@ -211,6 +211,16 @@
             <span class="ability-name" id="ability-name">Ability</span>
             <span class="ability-state" id="ability-state">READY</span>
           </div>
+
+          <!-- Live assist state, toggleable without leaving the match. -->
+          <div class="assists">
+            <button class="assist-chip" id="chip-autoaim" type="button" data-nav-skip>
+              Auto-aim
+            </button>
+            <button class="assist-chip" id="chip-autofire" type="button" data-nav-skip>
+              Auto-fire
+            </button>
+          </div>
         </div>
 
         <div class="hud-banner" id="hud-banner" hidden>
@@ -218,7 +228,21 @@
           <span id="hud-banner-sub"></span>
         </div>
 
-        <button class="btn btn-quiet hud-leave" id="btn-leave" data-nav-skip>Leave</button>
+        <div class="hud-actions">
+          <button class="btn btn-quiet" id="btn-pause" data-nav-skip hidden>Pause</button>
+          <button class="btn btn-quiet" id="btn-leave" data-nav-skip>Leave</button>
+        </div>
+
+        <!-- Room-wide freeze. Only the host can lift it, because the horde
+             only exists on the host. -->
+        <div class="pause-veil" id="pause-veil" hidden>
+          <div class="pause-card">
+            <h2>PAUSED</h2>
+            <p class="pause-by" id="pause-by">Paused by the host</p>
+            <button class="btn btn-primary" id="btn-resume" data-nav-skip>Resume</button>
+            <p class="pause-hint" id="pause-hint">Esc or P &middot; Start on a controller</p>
+          </div>
+        </div>
       </section>
 
       <!-- ----------------------------------------------------------- TOASTS -->

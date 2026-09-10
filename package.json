@@ -9,10 +9,11 @@
     "watch": "tsc --watch",
     "check": "tsc --noEmit",
     "serve": "python3 -m http.server 8080",
-    "test": "npm run build && node test/sim.test.mjs && node test/smoke.test.mjs && node test/multiplayer.test.mjs",
+    "test": "npm run build && node test/sim.test.mjs && node test/smoke.test.mjs && node test/mobile.test.mjs && node test/multiplayer.test.mjs",
     "test:sim": "node test/sim.test.mjs",
     "test:smoke": "node test/smoke.test.mjs",
-    "test:mp": "node test/multiplayer.test.mjs"
+    "test:mp": "node test/multiplayer.test.mjs",
+    "test:mobile": "node test/mobile.test.mjs"
   },
   "devDependencies": {
     "mqtt": "5.15.2",

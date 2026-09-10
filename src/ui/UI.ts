@@ -13,6 +13,7 @@ export interface UICallbacks {
   onDeploy(cls: ClassId): void;
   onLeave(): void;
   onCancelConnect(): void;
+  onTogglePause(): void;
 }
 
 interface ToggleDef {
@@ -145,6 +146,23 @@ export class UI {
     ability.classList.toggle('ready', s.abilityReady);
     this.text('ability-name', s.abilityName);
     this.text('ability-state', s.abilityReady ? 'READY' : `${s.abilityRemaining.toFixed(1)}s`);
+
+    // Pause is host-only: peers see the veil but get no control, because the
+    // horde they would be resuming does not run on their machine.
+    const pauseButton = this.el('btn-pause');
+    pauseButton.hidden = !s.canPause;
+    pauseButton.textContent = s.paused ? 'Resume' : 'Pause';
+
+    const veil = this.el('pause-veil');
+    if (veil.hidden === s.paused) veil.hidden = !s.paused;
+    if (s.paused) {
+      this.text('pause-by', s.canPause ? 'You paused the room' : `Paused by ${s.pausedBy || 'the host'}`);
+      this.el('btn-resume').hidden = !s.canPause;
+      this.text('pause-hint', s.canPause ? 'Esc or P · Start on a controller' : 'Waiting for the host to resume');
+    }
+
+    this.el('chip-autoaim').setAttribute('aria-pressed', String(this.settings.current.autoAim));
+    this.el('chip-autofire').setAttribute('aria-pressed', String(this.settings.current.autoFire));
 
     this.renderSquad(s.squad);
   }
@@ -317,6 +335,14 @@ export class UI {
     this.on('btn-cancel-connect', () => this.callbacks.onCancelConnect());
     this.on('btn-deploy', () => this.callbacks.onDeploy(this.selectedClass));
     this.on('btn-leave', () => this.callbacks.onLeave());
+
+    // Assists are the difference between playable and unplayable on a phone,
+    // so they are reachable mid-match rather than only from the settings menu.
+    this.on('btn-pause', () => this.callbacks.onTogglePause());
+    this.on('btn-resume', () => this.callbacks.onTogglePause());
+
+    this.on('chip-autoaim', () => this.settings.toggle('autoAim'));
+    this.on('chip-autofire', () => this.settings.toggle('autoFire'));
 
     this.on('btn-join', () => {
       const code = this.input('input-room').value.trim().toUpperCase();

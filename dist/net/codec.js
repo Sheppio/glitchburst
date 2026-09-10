@@ -155,14 +155,32 @@ export function decodePresence(id, payload) {
     return { id, name: f[0], cls: f[1], host: num(f[2]), alive: num(f[3]) };
 }
 /* ------------------------------------------------------------- heartbeat */
-export function encodeHeartbeat(hostId, seq, enemyCount, wave) {
-    return [hostId, seq, enemyCount, wave].join(FLD);
+export function encodeHeartbeat(hostId, seq, enemyCount, wave, paused) {
+    return [hostId, seq, enemyCount, wave, paused ? 1 : 0].join(FLD);
 }
 export function decodeHeartbeat(payload) {
     const f = payload.split(FLD);
     if (f.length < 4)
         return null;
-    return { hostId: f[0], seq: num(f[1]), enemyCount: num(f[2]), wave: num(f[3]) };
+    // The pause flag is a later addition, so it is read optionally: a client on
+    // an older build still produces a valid heartbeat, it just never pauses.
+    return {
+        hostId: f[0],
+        seq: num(f[1]),
+        enemyCount: num(f[2]),
+        wave: num(f[3]),
+        paused: f.length > 4 && num(f[4]) === 1,
+    };
+}
+/** Host -> room: `1|0,hostId,displayName`. */
+export function encodePause(paused, byId, byName) {
+    return [paused ? 1 : 0, byId, sanitizeName(byName)].join(FLD);
+}
+export function decodePause(payload) {
+    const f = payload.split(FLD);
+    if (f.length < 3)
+        return null;
+    return { paused: num(f[0]) === 1, byId: f[1], byName: f[2] };
 }
 /* ------------------------------------------------------------------ misc */
 /** Attacker-authority damage report: `amount,attackerId`. */

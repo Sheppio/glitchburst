@@ -62,6 +62,10 @@ const ui = new UI(uiRoot, settings, {
         ui.show('menu');
         navigator_.start();
     },
+    onTogglePause() {
+        const scene = game?.scene.getScene('game');
+        scene?.togglePause();
+    },
     onCancelConnect() {
         connecting = false;
         teardown();
@@ -157,11 +161,14 @@ async function deploy(cls) {
     // In-game the controller drives the character, so menu navigation stands down.
     navigator_.stop();
     document.body.classList.remove('nav-focus');
+    // The on-screen sticks belong to the match, not the menu.
+    input.setInGame(true);
     ui.show('hud');
     ui.setRoomCode(pendingRoomCode);
     connecting = false;
 }
 function teardown() {
+    input.setInGame(false);
     room?.leave();
     room = null;
     net.disconnect();

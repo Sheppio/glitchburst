@@ -36,7 +36,7 @@ Developing needs the compiler:
 ```bash
 npm install
 npm run watch      # tsc --watch, rebuilding dist/ on save
-npm test           # 64 tests: simulation, codec, single client, two clients
+npm test           # 85 tests: simulation, codec, single client, mobile, two clients
 ```
 
 `dist/` is committed on purpose — it is what GitHub Pages serves.
@@ -175,6 +175,19 @@ The decoy's pull is a flat *distance discount*, not a multiplier — a multiplie
 is useless exactly when the ability matters, since no plausible factor makes a
 decoy 700px away beat a player the enemy is already touching.
 
+### Reading the fight
+
+Enemy health bars appear **only once an enemy has been damaged**. A bar over
+every enemy would be noise — at the cap that is a hundred of them — and the
+thing a player actually wants to spot is the one that is nearly dead. Hiding
+them at full health makes a visible bar *mean* something: a target worth
+finishing, and a legible record of what the rest of the squad has softened up.
+
+Max health is not on the wire, since it scales with wave and squad size; peers
+infer it from the highest value they have seen. That is exact for any enemy the
+client watched spawn, and briefly optimistic for one that was already damaged
+when they joined.
+
 ## Enemies
 
 | | HP | Speed | Behaviour |
@@ -202,6 +215,19 @@ A fifth arrival works out that it is the overflow (same sort as the election)
 and backs out on its own.
 
 ---
+
+## Pause
+
+The host can freeze the whole room — **Esc** or **P**, Start/Options on a pad,
+or the Pause button. Pause is a property of the room rather than of a client,
+because the horde only exists on one machine: a peer that stopped rendering
+locally would still be walked into by enemies the host kept simulating. So the
+host owns the flag, broadcasts it, and stops stepping; everyone else freezes
+because the snapshots stop changing. The flag also rides on the heartbeat, so a
+client joining a paused room learns about it within 500 ms.
+
+Peers see the veil but get no resume control. Leave stays clickable while
+paused.
 
 ## Controls
 
@@ -275,25 +301,37 @@ for a game — just don't build anything that needs privacy on top of it.
 npm test
 ```
 
-64 checks across three suites. The browser suites vendor Phaser locally and
+85 checks across four suites. The browser suites vendor Phaser locally and
 swap MQTT for a loopback stub that relays over `BroadcastChannel`, so two tabs
 share one "broker" and a real multi-client room can be tested offline.
 
 - **`sim.test.mjs`** (31) — codec round-trips, truncation tolerance, payload
   size at the cap, enemy cap, difficulty scaling, damage attribution, steering,
   decoy priority, host adoption, shockwave.
-- **`smoke.test.mjs`** (15) — menus, Phaser boot, election, 20 Hz batching,
-  attacker-authority kills, abilities, and broadcast rate under a starved
-  renderer.
-- **`multiplayer.test.mjs`** (18) — two clients: election, peer unpacking,
-  mid-game join, interpolation, squad scaling, and **host failover** with the
-  horde carried through.
+- **`smoke.test.mjs`** (17) — menus, Phaser boot, election, 20 Hz batching,
+  attacker-authority kills, abilities, pause, and broadcast rate under a
+  starved renderer.
+- **`mobile.test.mjs`** (14) — an emulated Pixel with a touchscreen and no
+  mouse: taps through the whole flow, and hit-tests that nothing invisible is
+  covering the buttons.
+- **`multiplayer.test.mjs`** (23) — two clients: election, peer unpacking,
+  mid-game join, interpolation, squad scaling, pause propagation, and **host
+  failover** with the horde carried through.
 
-These caught five real bugs, including a zero-magnitude deadzone that produced
-`NaN` movement — which propagated into enemy spawns and made *every* bullet
-register a hit, because `NaN` fails every bounds check it is given — and the
-host tick being coupled to the render loop, which CI surfaced by running the
-game at 3 Hz on a software renderer.
+These caught eight real bugs. The most instructive:
+
+- A zero-magnitude deadzone produced `NaN` movement, which propagated into
+  enemy spawns and made *every* bullet register a hit — `NaN` fails every
+  bounds check it is given, including the one meant to reject a miss.
+- The host tick was coupled to the render loop, which CI surfaced by running
+  the game at 3 Hz on a software renderer.
+- Every glow effect used additive blending, which is mathematically a no-op on
+  a white background. Bullets were invisible.
+- The on-screen stick overlay was enabled on the front end, where it sat on top
+  of the menu and swallowed every tap on a phone. `mobile.test.mjs` now
+  hit-tests `elementFromPoint` on the buttons for exactly this reason.
+- A `hidden` full-screen overlay still intercepted clicks, because an author
+  `display` rule beats the `hidden` attribute.
 
 ### Known limitations
 

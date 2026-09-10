@@ -136,6 +136,36 @@ check('host counts a squad of two', aSquad.squad === 2 && aSquad.engineSquad ===
   `room ${aSquad.squad}, engine ${aSquad.engineSquad}`);
 check('HUD reports squad size', (await a.textContent('#hud-players')).trim() === '2/4');
 
+/* ---------------------------------------------------------------- pause */
+
+const peerPositions = () => b.evaluate(() => {
+  const scene = window.glitchburst.game.scene.getScene('game');
+  return [...scene.enemies.values()].map((v) => `${Math.round(v.tx)},${Math.round(v.ty)}`).join('|');
+});
+
+await a.bringToFront();
+await a.click('#btn-pause');
+await b.bringToFront();
+await b.waitForTimeout(900);
+
+check('host pause reaches the peer', await b.isVisible('#pause-veil'));
+check('peer gets no resume control', !(await b.isVisible('#btn-resume')));
+check('peer has no pause button at all', !(await b.isVisible('#btn-pause')));
+
+const frozenBefore = await peerPositions();
+await b.waitForTimeout(900);
+check('the horde is frozen on the peer, not just veiled',
+  frozenBefore === (await peerPositions()) && frozenBefore.length > 0);
+
+await a.bringToFront();
+await a.click('#btn-pause');
+await b.bringToFront();
+await b.waitForTimeout(700);
+const movingBefore = await peerPositions();
+await b.waitForTimeout(700);
+check('host resume restarts the peer too',
+  !(await b.isVisible('#pause-veil')) && movingBefore !== (await peerPositions()));
+
 /* ------------------------------------------------------------- failover */
 
 const hordeBefore = (await state(b)).hordePublished;
