@@ -13,6 +13,7 @@
 import { chromium } from 'playwright';
 import { createServer } from 'node:http';
 import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -25,7 +26,18 @@ const MIME = {
   '.css': 'text/css', '.map': 'application/json', '.png': 'image/png',
 };
 
-const CHROME = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+/**
+ * Chromium location.
+ *
+ * Prefer an explicit CHROME_PATH, then the browser this dev container ships
+ * with, and otherwise fall back to letting Playwright resolve its own download
+ * — which is what happens in CI after `playwright install chromium`.
+ */
+function chromePath() {
+  if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
+  const bundled = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+  return existsSync(bundled) ? bundled : undefined;
+}
 
 /** Build test/rig/index.html plus its local dependencies. */
 export async function buildRig() {
@@ -71,7 +83,7 @@ export async function startServer(port = 8099) {
 export async function launch({ uncapped = false } = {}) {
   const args = ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'];
   if (uncapped) args.push('--disable-frame-rate-limit');
-  return chromium.launch({ executablePath: CHROME, args });
+  return chromium.launch({ executablePath: chromePath(), args });
 }
 
 export function reporter(title) {
