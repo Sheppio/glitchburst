@@ -633,6 +633,31 @@ body.console-platform .console-banner { display: flex; }
   text-shadow: 2px 0 var(--magenta), -2px 0 var(--cyan-bright);
 }
 
+.over-veil .pause-card h2 { text-shadow: 2px 0 var(--magenta), -2px 0 var(--amber); }
+
+.over-stats {
+  display: flex;
+  gap: 26px;
+  justify-content: center;
+  margin: 4px 0 22px;
+}
+
+.over-stats div { display: flex; flex-direction: column; gap: 2px; }
+
+.over-stats span {
+  font-family: var(--display);
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.over-stats small {
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
 .pause-by { font-size: 12px; color: var(--ink-soft); margin: 0 0 20px; letter-spacing: 0.06em; }
 .pause-hint { font-size: 10.5px; color: var(--ink-faint); margin: 14px 0 0; letter-spacing: 0.08em; }
 

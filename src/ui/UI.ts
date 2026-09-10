@@ -16,6 +16,7 @@ export interface UICallbacks {
   onLeave(): void;
   onCancelConnect(): void;
   onTogglePause(): void;
+  onPlayAgain(): void;
 }
 
 interface ToggleDef {
@@ -207,6 +208,26 @@ export class UI {
     ability.classList.toggle('ready', s.abilityReady);
     this.text('ability-name', s.abilityName);
     this.text('ability-state', s.abilityReady ? 'READY' : `${s.abilityRemaining.toFixed(1)}s`);
+
+    // Reboots are a solo concept; in a squad the roster is the life counter, so
+    // showing "0 left" beside three living teammates would be a lie.
+    const reboots = this.el('reboots-block');
+    reboots.hidden = s.rebootsLeft === null;
+    if (s.rebootsLeft !== null) this.text('hud-reboots', String(s.rebootsLeft));
+
+    const over = this.el('over-veil');
+    if (over.hidden === s.gameOver) {
+      over.hidden = !s.gameOver;
+      if (s.gameOver) {
+        this.text('over-wave', String(s.wave));
+        this.text('over-score', String(s.score));
+        this.text('over-chips', String(s.chips));
+        this.text(
+          'over-reason',
+          s.rebootsLeft === null ? 'The squad was wiped out' : 'All reboots exhausted',
+        );
+      }
+    }
 
     this.text('chips-count', `${s.chips} / ${s.chipsPerPowerUp}`);
     this.el('chips-fill').style.width = `${(s.chips / Math.max(1, s.chipsPerPowerUp)) * 100}%`;
@@ -433,6 +454,8 @@ export class UI {
 
     // Assists are the difference between playable and unplayable on a phone,
     // so they are reachable mid-match rather than only from the settings menu.
+    this.on('btn-again', () => this.callbacks.onPlayAgain());
+    this.on('btn-over-leave', () => this.callbacks.onLeave());
     this.on('btn-pause', () => this.callbacks.onTogglePause());
     this.on('btn-resume', () => this.callbacks.onTogglePause());
 

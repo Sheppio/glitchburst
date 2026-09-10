@@ -171,6 +171,83 @@ check('shots are batched, not one message per pellet', await a.evaluate(() => {
 
 await a.evaluate(() => window.glitchburst.settings.set('autoFire', false));
 
+/* ---------------------------------------------------------------- lives */
+
+// A squad ignores the solo reboot pool entirely: you come back for as long as
+// somebody is still standing, and a wipe is what ends the run.
+await b.bringToFront();
+const revived = await b.evaluate(async () => {
+  const scene = window.glitchburst.game.scene.getScene('game');
+  clearInterval(window.__keepAlive);
+  // Well past the three reboots a solo player would be allowed.
+  scene.deaths = 9;
+  scene.downedFor = 0;
+  scene.me.hp = scene.me.maxHp;
+  scene.takeDamage(99999);
+  return { gameOver: scene.gameOver, waiting: Math.round(scene.downedFor), deaths: scene.deaths };
+});
+check('a squad member reboots past the solo limit while a mate stands',
+  revived.gameOver === false && revived.waiting > 0,
+  `death ${revived.deaths}, rebooting in ${revived.waiting}s`);
+check('the reboot delay is capped', revived.waiting <= 20, `${revived.waiting}s`);
+
+check('reboots are not counted in a squad', (await state(b)).isHost === false &&
+  (await b.evaluate(() => window.glitchburst.game.scene.getScene('game').rebootsLeft())) === null);
+
+// Now down the rest of the squad, and the next death is terminal.
+await a.bringToFront();
+await a.evaluate(() => {
+  const scene = window.glitchburst.game.scene.getScene('game');
+  clearInterval(window.__keepAlive);
+  scene.downedFor = 0;
+  scene.me.hp = scene.me.maxHp;
+  scene.takeDamage(99999);
+});
+await b.bringToFront();
+// A is backgrounded now, and a background tab's rAF is throttled to about 1Hz —
+// so its downed state goes out on the next slow publish, not the next frame.
+await b.waitForFunction(
+  () => {
+    const scene = window.glitchburst.game.scene.getScene('game');
+    return [...scene.remotes.values()].every((r) => (r.state.flags & 4) !== 0);
+  },
+  null,
+  { timeout: 8000 },
+).catch(() => {});
+
+const wiped = await b.evaluate(async () => {
+  const scene = window.glitchburst.game.scene.getScene('game');
+  scene.gameOver = false;
+  scene.downedFor = 0;
+  scene.me.hp = scene.me.maxHp;
+  const mates = scene.squadmatesAlive();
+  scene.takeDamage(99999);
+  // The veil is painted by the HUD on the next frame, not by takeDamage.
+  await new Promise((r) => requestAnimationFrame(r));
+  await new Promise((r) => requestAnimationFrame(r));
+  return {
+    gameOver: scene.gameOver,
+    veiled: !document.getElementById('over-veil').hidden,
+    mates,
+  };
+});
+check('a wipe ends the run', wiped.gameOver && wiped.veiled,
+  `${wiped.mates} squadmates standing, failure screen ${wiped.veiled ? 'shown' : 'MISSING'}`);
+
+// Restore both clients for the tests that follow.
+for (const page of [a, b]) {
+  await page.bringToFront();
+  await page.evaluate(() => {
+    const scene = window.glitchburst.game.scene.getScene('game');
+    scene.gameOver = false;
+    scene.deaths = 0;
+    scene.downedFor = 0;
+    scene.me.hp = scene.me.maxHp;
+    window.__keepAlive = setInterval(() => { scene.me.hp = scene.me.maxHp; }, 100);
+  });
+}
+await b.waitForTimeout(400);
+
 /* ---------------------------------------------------------------- pause */
 
 const peerPositions = () => b.evaluate(() => {

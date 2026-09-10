@@ -71,6 +71,7 @@ let room: RoomSession | null = null;
 let pendingRoomCode = '';
 let pendingBrokerUrl = BROKERS[0]!.url;
 let connecting = false;
+let lastClass: ClassId = 'overclocker';
 
 const ui = new UI(uiRoot, settings, {
   onCreateRoom(name) {
@@ -99,6 +100,14 @@ const ui = new UI(uiRoot, settings, {
     teardown();
     ui.show('menu');
     navigator_.start();
+  },
+
+  onPlayAgain() {
+    // A fresh run in the same room: tear the scene down and deploy again, so
+    // the horde engine, progression and reboot count all start clean.
+    const cls = lastClass;
+    teardown();
+    void deploy(cls);
   },
 
   onTogglePause() {
@@ -132,6 +141,7 @@ net.events.on('status', ({ status, detail }) => {
 async function deploy(cls: ClassId): Promise<void> {
   if (connecting) return;
   connecting = true;
+  lastClass = cls;
 
   ui.show('connecting');
   ui.setConnectDetail(`Opening WebSocket to ${hostOf(pendingBrokerUrl)}…`);

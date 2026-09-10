@@ -36,7 +36,7 @@ Developing needs the compiler:
 ```bash
 npm install
 npm run watch      # tsc --watch, rebuilding dist/ on save
-npm test           # 150 tests: simulation, codec, single client, mobile, two clients
+npm test           # 155 tests: simulation, codec, single client, mobile, two clients
 ```
 
 `dist/` is committed on purpose — it is what GitHub Pages serves.
@@ -229,6 +229,25 @@ Chips accelerate toward you without damping once they latch on. That asymmetry
 is deliberate: you have a top speed and a chip does not, so a chip can never be
 outrun.
 
+## Reboots
+
+Solo and squad play fail differently, so they get different rules.
+
+**Solo** spends a pool of **three reboots**; the fourth death ends the run.
+Unlimited reboots on your own means the run has no stakes and never resolves —
+you grind until bored rather than losing.
+
+**In a squad** reboots are not counted at all. You come back for as long as
+*somebody* is still standing, and a **wipe** is what ends the run. The pressure
+comes from your friends rather than from a token count, and it makes the last
+player alive obviously important.
+
+Either way, **each reboot takes longer than the last** — five seconds, then
+eight, then eleven, capped at twenty. That escalation is the real difficulty
+curve: a flat delay makes dying nearly free by the tenth time, while a rising
+one lets a bad run compound without ever hard-stopping a squad that is still
+fighting.
+
 ## Wave pacing
 
 A fixed interval cannot work here. Wave size grows linearly and enemy health
@@ -389,7 +408,7 @@ for a game — just don't build anything that needs privacy on top of it.
 npm test
 ```
 
-150 checks across four suites. The browser suites vendor Phaser locally and
+155 checks across four suites. The browser suites vendor Phaser locally and
 swap MQTT for a loopback stub that relays over `BroadcastChannel`, so two tabs
 share one "broker" and a real multi-client room can be tested offline.
 
@@ -398,14 +417,14 @@ share one "broker" and a real multi-client room can be tested offline.
   attribution, steering, decoy priority, host adoption, shockwave, progression
   and upgrade caps, deterministic drop rolls, turn-rate limiting, and the
   auto-aim scoring formula.
-- **`smoke.test.mjs`** (27) — menus, persistence, Phaser boot, election, 20 Hz
+- **`smoke.test.mjs`** (28) — menus, persistence, Phaser boot, election, 20 Hz
   batching, attacker-authority kills, point-blank hits, chip pickup and
   conversion, turn rate, abilities, pause, and broadcast rate under a starved
   renderer.
 - **`mobile.test.mjs`** (14) — an emulated Pixel with a touchscreen and no
   mouse: taps through the whole flow, and hit-tests that nothing invisible is
   covering the buttons.
-- **`multiplayer.test.mjs`** (27) — two clients: election, peer unpacking,
+- **`multiplayer.test.mjs`** (31) — two clients: election, peer unpacking,
   mid-game join, interpolation, squad scaling, seeing each other's fire, pause
   propagation, and **host failover** with the horde carried through.
 

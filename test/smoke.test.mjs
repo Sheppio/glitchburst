@@ -424,6 +424,38 @@ await step('resuming restarts the simulation', async () => {
   return { ok: before !== after && !(await page.isVisible('#pause-veil')), note: 'horde moving again' };
 });
 
+await step('a solo run ends after three reboots, each slower than the last', async () => {
+  const out = await page.evaluate(async () => {
+    const scene = window.glitchburst.game.scene.getScene('game');
+    clearInterval(window.__keepAlive);
+
+    const delays = [];
+    for (let i = 0; i < 4; i++) {
+      scene.downedFor = 0;
+      scene.me.hp = scene.me.maxHp;
+      scene.takeDamage(99999);
+      delays.push(Number.isFinite(scene.downedFor) ? Math.round(scene.downedFor) : 'run over');
+    }
+    const over = scene.gameOver;
+    const veiled = !document.getElementById('over-veil').hidden;
+
+    // Put the scene back so later steps get a living player.
+    scene.gameOver = false;
+    scene.deaths = 0;
+    scene.downedFor = 0;
+    scene.me.hp = scene.me.maxHp;
+    window.__keepAlive = setInterval(() => { scene.me.hp = scene.me.maxHp; }, 100);
+
+    return { delays, over, veiled };
+  });
+
+  const escalates = out.delays[0] === 5 && out.delays[1] === 8 && out.delays[2] === 11;
+  return {
+    ok: escalates && out.delays[3] === 'run over' && out.over,
+    note: `${out.delays.join('s, ')}${out.veiled ? ' (failure screen shown)' : ''}`,
+  };
+});
+
 await step('audio starts after a gesture and mutes on demand', async () => {
   const out = await page.evaluate(async () => {
     const { audio, music, sfx } = window.glitchburst;

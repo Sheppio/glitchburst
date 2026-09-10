@@ -1,5 +1,5 @@
 import * as Phaser from 'phaser';
-import { HORDE, NET, RENDER, TURN_RATE_RAD_PER_SEC, WORLD } from '../config.js';
+import { HORDE, LIVES, NET, RENDER, TURN_RATE_RAD_PER_SEC, WORLD } from '../config.js';
 import { HAPTIC } from '../input/settings.js';
 import type { InputManager } from '../input/InputManager.js';
 import type { SettingsStore } from '../input/settings.js';
@@ -51,6 +51,9 @@ export interface HudSnapshot {
   abilityName: string;
   downed: boolean;
   respawnIn: number;
+  /** Reboots left in solo play; null in a squad, where headcount governs. */
+  rebootsLeft: number | null;
+  gameOver: boolean;
   /** Chips banked toward the next power-up, and how many a set takes. */
   chips: number;
   chipsPerPowerUp: number;
@@ -227,6 +230,9 @@ export class GameScene extends Phaser.Scene {
   private abilityActiveUntil = 0;
   private contactCooldown = 0;
   private downedFor = 0;
+  /** Times this player has been reduced to zero health this run. */
+  private deaths = 0;
+  private gameOver = false;
   private score = 0;
   private snapshotTick = 0;
   private lastWave = 0;
@@ -391,6 +397,12 @@ export class GameScene extends Phaser.Scene {
 
     const intent = input.update(screen, this.me);
     const boosted = this.time.now < this.abilityActiveUntil && this.def.ability.kind === 'overclock';
+
+    if (this.gameOver) {
+      this.me.flags = FLAG_DOWN;
+      this.player.setAlpha(0.18);
+      return;
+    }
 
     if (this.downedFor > 0) {
       this.downedFor -= dt;
@@ -692,13 +704,66 @@ export class GameScene extends Phaser.Scene {
     // health change is the one piece of player state worth a dedicated message.
     this.publishPlayerNow();
 
-    if (this.me.hp <= 0) {
-      this.downedFor = 5;
-      this.me.flags = FLAG_DOWN;
-      this.fx.enemyBurst(this.me.x, this.me.y, this.def.colour, 1.6);
-      this.cfg.sfx.died();
-      this.cfg.onBanner('PROCESS TERMINATED', 'Rebooting in 5s');
+    if (this.me.hp <= 0) this.onKilled();
+  }
+
+  /**
+   * Zero health. Whether that is a setback or the end of the run depends on the
+   * mode — see `LIVES`.
+   */
+  private onKilled(): void {
+    this.deaths += 1;
+    this.me.flags = FLAG_DOWN;
+    this.fx.enemyBurst(this.me.x, this.me.y, this.def.colour, 1.6);
+    this.cfg.sfx.died();
+
+    if (!this.canReboot()) {
+      this.gameOver = true;
+      this.downedFor = Infinity;
+      this.cfg.onBanner('SYSTEM FAILURE', 'No reboots remaining');
+      return;
     }
+
+    this.downedFor = this.rebootDelay();
+    const left = this.rebootsLeft();
+    this.cfg.onBanner(
+      'PROCESS TERMINATED',
+      left === null
+        ? `Rebooting in ${this.downedFor}s`
+        : `Rebooting in ${this.downedFor}s · ${left} reboot${left === 1 ? '' : 's'} left`,
+    );
+  }
+
+  /**
+   * Solo runs spend a fixed pool of reboots. A squad instead reboots for as
+   * long as somebody is still on their feet, so a wipe is what ends the run —
+   * which means the last player standing is carrying the whole team, and knows
+   * it.
+   */
+  private canReboot(): boolean {
+    if (this.cfg.room.squadSize > 1) return this.squadmatesAlive() > 0;
+    return this.deaths <= LIVES.soloReboots;
+  }
+
+  private squadmatesAlive(): number {
+    let alive = 0;
+    for (const remote of this.remotes.values()) {
+      if ((remote.state.flags & FLAG_DOWN) === 0) alive++;
+    }
+    return alive;
+  }
+
+  /** Null in a squad, where reboots are not counted. */
+  private rebootsLeft(): number | null {
+    if (this.cfg.room.squadSize > 1) return null;
+    return Math.max(0, LIVES.soloReboots - this.deaths);
+  }
+
+  private rebootDelay(): number {
+    return Math.min(
+      LIVES.rebootMaxSec,
+      LIVES.rebootBaseSec + (this.deaths - 1) * LIVES.rebootStepSec,
+    );
   }
 
   private respawn(): void {
@@ -1363,7 +1428,9 @@ export class GameScene extends Phaser.Scene {
       abilityRemaining: Math.max(0, this.abilityCooldown),
       abilityName: this.def.ability.name,
       downed: this.downedFor > 0,
-      respawnIn: Math.max(0, this.downedFor),
+      respawnIn: Number.isFinite(this.downedFor) ? Math.max(0, this.downedFor) : 0,
+      rebootsLeft: this.rebootsLeft(),
+      gameOver: this.gameOver,
       players: this.cfg.room.squadSize,
       chips: this.progression.progress.chips,
       chipsPerPowerUp: PROGRESSION.chipsPerPowerUp,

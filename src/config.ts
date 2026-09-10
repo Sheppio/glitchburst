@@ -111,6 +111,32 @@ export const DIFFICULTY = {
   soloHealthDiscount: 0.9,
 } as const;
 
+export const LIVES = {
+  /**
+   * Reboots available to a solo player. The fourth death ends the run.
+   *
+   * Solo and squad play need different rules because they fail differently. On
+   * your own, unlimited reboots mean the run has no stakes and never resolves —
+   * you simply grind until bored. In a squad the pressure comes from your
+   * friends: someone has to stay standing, and being revived by the team
+   * surviving is a better mechanic than counting tokens, so headcount replaces
+   * the limit entirely.
+   */
+  soloReboots: 3,
+  /** First reboot takes this long. */
+  rebootBaseSec: 5,
+  /**
+   * Each subsequent reboot adds this much.
+   *
+   * Escalation is the actual difficulty curve here: a flat delay means dying is
+   * nearly free by the tenth time, while a rising one makes a bad run compound
+   * without ever hard-stopping a squad that is still fighting.
+   */
+  rebootStepSec: 3,
+  /** Ceiling, so a long squad run cannot leave someone watching for a minute. */
+  rebootMaxSec: 20,
+} as const;
+
 export const PLAYER = {
   /**
    * Maximum weapon/body turn rate, in revolutions per minute.

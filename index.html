@@ -191,6 +191,10 @@
             <span class="hud-label">Squad</span>
             <span class="hud-value" id="hud-players">1/4</span>
           </div>
+          <div class="hud-block" id="reboots-block" hidden>
+            <span class="hud-label">Reboots</span>
+            <span class="hud-value" id="hud-reboots">3</span>
+          </div>
           <div class="hud-block hud-room">
             <span class="hud-label">Room</span>
             <span class="hud-value" id="hud-room">····</span>
@@ -241,6 +245,23 @@
         <div class="hud-actions">
           <button class="btn btn-quiet" id="btn-pause" data-nav-skip hidden>Pause</button>
           <button class="btn btn-quiet" id="btn-leave" data-nav-skip>Leave</button>
+        </div>
+
+        <!-- End of the run. -->
+        <div class="pause-veil over-veil" id="over-veil" hidden>
+          <div class="pause-card">
+            <h2>SYSTEM FAILURE</h2>
+            <p class="pause-by" id="over-reason">All reboots exhausted</p>
+            <div class="over-stats">
+              <div><span id="over-wave">0</span><small>Wave</small></div>
+              <div><span id="over-score">0</span><small>Score</small></div>
+              <div><span id="over-chips">0</span><small>Chips</small></div>
+            </div>
+            <div class="button-row">
+              <button class="btn btn-primary" id="btn-again" data-nav-skip>Play again</button>
+              <button class="btn btn-ghost" id="btn-over-leave" data-nav-skip>Menu</button>
+            </div>
+          </div>
         </div>
 
         <!-- Room-wide freeze. Only the host can lift it, because the horde
