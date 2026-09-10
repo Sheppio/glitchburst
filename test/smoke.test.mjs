@@ -227,10 +227,20 @@ await step('chips are drawn to the player and collected', async () => {
     chip.vy = 0;
     chip.ttl = 20;
     const banked = scene.progress.totalChips;
-    await new Promise((r) => setTimeout(r, 500));
-    return { ok: scene.progress.totalChips > banked, why: 'not collected within 500ms' };
+
+    // Poll, for the same reason as the point-blank test: a fixed wall-clock
+    // sleep measures the renderer, not the game, once dt clamping kicks in.
+    const start = performance.now();
+    while (performance.now() - start < 2500 && scene.progress.totalChips === banked) {
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+    return {
+      ok: scene.progress.totalChips > banked,
+      ms: Math.round(performance.now() - start),
+      why: 'never collected',
+    };
   });
-  return { ok: result.ok, note: result.ok ? 'magnetised and banked inside 500ms' : result.why };
+  return { ok: result.ok, note: result.ok ? `magnetised and banked in ${result.ms}ms` : result.why };
 });
 
 await step('a chip cannot be outrun', async () => {
@@ -282,7 +292,23 @@ await step('a point-blank enemy is still hittable', async () => {
     // whether a contact-range target *can* be hit at all.
     const restore = scene.cfg.input.aimAssist;
     scene.cfg.input.aimAssist = () => ({ x: entity.x, y: entity.y });
-    await new Promise((r) => setTimeout(r, 900));
+
+    // Poll rather than sleep. The scene clamps dt to 50ms a frame, so on a slow
+    // renderer wall time and simulated time diverge badly — at 11fps a 900ms
+    // sleep is barely 500ms of game time, which is less than one Fireman fire
+    // interval. The test would then be asserting on a window in which the
+    // player never fired.
+    const deadline = performance.now() + 8000;
+    while (performance.now() < deadline) {
+      const live = scene.horde.enemies.get(view.id);
+      if (!live || live.hp < before) break;
+      await new Promise((r) => requestAnimationFrame(r));
+      // Hold it in place; a drone's AI backs away from anything this close.
+      if (live) {
+        live.x = scene.me.x + 2;
+        live.y = scene.me.y + 2;
+      }
+    }
     scene.cfg.input.aimAssist = restore;
     const survivor = scene.horde.enemies.get(view.id);
     return { ok: !survivor || survivor.hp < before, why: `hp stayed at ${before}` };
