@@ -656,6 +656,65 @@ body.console-platform .console-banner { display: flex; }
   to { opacity: 1; transform: translate(-50%, 0); }
 }
 
+/* ------------------------------------------------------ chips & upgrades */
+
+.chips {
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 9px 13px;
+  min-width: 168px;
+  box-shadow: var(--shadow-soft);
+}
+
+.chips-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+
+.chips-label {
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.chips-count { font-size: 11px; font-weight: 700; color: var(--lime); letter-spacing: 0.06em; }
+
+.chips-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-alt);
+  overflow: hidden;
+  margin-top: 6px;
+}
+
+.chips-bar i {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #7cff3d, var(--lime));
+  transition: width 0.14s linear;
+}
+
+.upgrade-stacks { display: flex; gap: 5px; margin-top: 7px; }
+
+.upgrade-stack {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 3px 7px;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  color: var(--ink-faint);
+  background: var(--surface-alt);
+}
+
+.upgrade-stack.owned {
+  color: #fff;
+  border-color: transparent;
+  background: var(--accent);
+}
+
 /* --------------------------------------------------------- assist chips */
 
 .assists { display: flex; gap: 6px; }

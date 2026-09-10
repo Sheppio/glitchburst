@@ -8,7 +8,9 @@ import {
   encodeHorde, decodeHorde, encodeEvents, decodeEvents,
   encodePlayer, decodePlayer, encodeField, decodeField, sanitizeName,
 } from '../dist/net/codec.js';
-import { HORDE } from '../dist/config.js';
+import { HORDE, PLAYER, TURN_RATE_RAD_PER_SEC } from '../dist/config.js';
+import { PlayerProgress, PROGRESSION, UPGRADES } from '../dist/sim/progression.js';
+import { approachAngle } from '../dist/util.js';
 
 const { check, finish } = reporter('GLITCHBURST — simulation & codec');
 
@@ -166,6 +168,101 @@ const run = (engine, seconds, t = targets(1)) => {
   engine.step(1 / 60, targets(1));
   check('shockwave imparts knockback',
     Math.hypot(bug.x - before.x, bug.y - before.y) > 0.5);
+}
+
+/* ----------------------------------------------------------- progression */
+
+{
+  const p = new PlayerProgress();
+  let earned = 0;
+  for (let i = 0; i < PROGRESSION.chipsPerPowerUp - 1; i++) earned += p.addChip() ? 1 : 0;
+  check('a partial set earns nothing', earned === 0 && p.chips === PROGRESSION.chipsPerPowerUp - 1);
+
+  check('completing a set earns a power-up', p.addChip() === true);
+  check('the counter rolls over rather than resetting', p.chips === 0);
+  check('total chips are tracked across sets', p.totalChips === PROGRESSION.chipsPerPowerUp);
+}
+
+{
+  const p = new PlayerProgress();
+  check('multipliers start neutral',
+    p.damageMultiplier === 1 && p.speedMultiplier === 1 && p.fireIntervalMultiplier === 1);
+
+  p.grant('damage');
+  check('a damage stack raises weapon damage',
+    Math.abs(p.damageMultiplier - (1 + UPGRADES.damage.step)) < 1e-9,
+    `x${p.damageMultiplier.toFixed(2)}`);
+
+  p.grant('speed');
+  check('a speed stack raises movement speed', p.speedMultiplier > 1, `x${p.speedMultiplier.toFixed(2)}`);
+
+  p.grant('firerate');
+  check('a fire-rate stack shortens the fire interval', p.fireIntervalMultiplier < 1,
+    `x${p.fireIntervalMultiplier.toFixed(3)} interval`);
+}
+
+{
+  const p = new PlayerProgress();
+  for (let i = 0; i < UPGRADES.speed.maxStacks; i++) p.grant('speed');
+  check('stacks cap out', p.grant('speed') === false && p.stacks.speed === UPGRADES.speed.maxStacks,
+    `capped at ${UPGRADES.speed.maxStacks}`);
+  check('a maxed upgrade is never rolled again',
+    Array.from({ length: 200 }, () => p.rollUpgrade()).every((id) => id !== 'speed'));
+}
+
+{
+  const p = new PlayerProgress();
+  for (const id of ['damage', 'speed', 'firerate']) {
+    for (let i = 0; i < UPGRADES[id].maxStacks; i++) p.grant(id);
+  }
+  check('a fully upgraded player rolls nothing', p.rollUpgrade() === null);
+}
+
+{
+  // Weighting should broaden a build rather than pile onto one line.
+  const p = new PlayerProgress();
+  for (let i = 0; i < 6; i++) p.grant('damage');
+  const rolls = Array.from({ length: 3000 }, () => p.rollUpgrade());
+  const dmg = rolls.filter((r) => r === 'damage').length;
+  check('rolls favour upgrades the player lacks', dmg / rolls.length < 0.2,
+    `${((dmg / rolls.length) * 100).toFixed(1)}% rolled damage after 6 damage stacks`);
+}
+
+/* ------------------------------------------------------------ turn rate */
+
+{
+  const step = TURN_RATE_RAD_PER_SEC / 60; // one frame at 60fps
+  check('turn rate is expressed in RPM and converted once',
+    Math.abs(TURN_RATE_RAD_PER_SEC - (PLAYER.turnRateRpm * Math.PI * 2) / 60) < 1e-9,
+    `${PLAYER.turnRateRpm} RPM = ${TURN_RATE_RAD_PER_SEC.toFixed(1)} rad/s`);
+
+  check('a small turn completes in one step', approachAngle(0, step / 2, step) === step / 2);
+
+  // Exactly opposite is the ambiguous case — both directions are equally
+  // short — so assert the step size, not its sign.
+  check('a large turn is rate limited',
+    Math.abs(Math.abs(approachAngle(0, Math.PI, step)) - step) < 1e-9);
+
+  // Turning must take the short way round: +170 to -170 degrees is 20 degrees
+  // onward through 180, not 340 back the other way. Use a step smaller than
+  // that gap, or the turn simply completes and proves nothing.
+  const from = (170 * Math.PI) / 180;
+  const to = (-170 * Math.PI) / 180;
+  const slow = (5 * Math.PI) / 180;
+  const stepped = approachAngle(from, to, slow);
+  check('turns take the shorter arc', stepped > from && stepped < Math.PI,
+    `${((stepped * 180) / Math.PI).toFixed(0)} degrees, onward through 180`);
+  check('a turn shorter than one step snaps to the target',
+    approachAngle(from, to, step) === to, 'no overshoot');
+
+  let angle = 0;
+  let frames = 0;
+  while (Math.abs(angle - Math.PI) > 1e-6 && frames < 600) {
+    angle = approachAngle(angle, Math.PI, step);
+    frames++;
+  }
+  check('a 180-degree turn takes a playable time', frames / 60 < 0.35,
+    `${(frames / 60 * 1000).toFixed(0)}ms at ${PLAYER.turnRateRpm} RPM`);
 }
 
 finish();

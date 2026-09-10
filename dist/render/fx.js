@@ -48,6 +48,14 @@ export class Fx {
      * invisible. One colour for "damage", always, with a white outline so it
      * stays legible over sprites, grid lines and other numbers.
      */
+    /** A chip landing in the bank. Deliberately quiet — this fires constantly. */
+    chipSpark(x, y) {
+        this.emitterFor(0x7cff3d).explode(3, x, y);
+    }
+    /** What an upgrade actually did, in its own colour. */
+    upgradeText(x, y, text, colour) {
+        this.floatText(x, y, text, colour, 19, 1400, '#ffffff');
+    }
     damageNumber(x, y, amount) {
         this.floatText(x, y, `-${Math.round(amount)}`, DAMAGE_RED, 17, 700, '#ffffff');
     }

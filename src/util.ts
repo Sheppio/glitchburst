@@ -43,6 +43,21 @@ export function lerpAngle(a: number, b: number, t: number): number {
   return a + d * t;
 }
 
+/**
+ * Step `from` toward `to` by at most `maxDelta` radians, the short way round.
+ *
+ * Used for the player's turn rate: unlike `lerpAngle`, this moves at a constant
+ * angular speed rather than easing, so the turn takes a predictable time
+ * regardless of how far it has to go — which is what makes a turn-rate limit
+ * feel like a mechanic instead of like lag.
+ */
+export function approachAngle(from: number, to: number, maxDelta: number): number {
+  let diff = ((to - from + Math.PI) % (Math.PI * 2)) - Math.PI;
+  if (diff < -Math.PI) diff += Math.PI * 2;
+  if (Math.abs(diff) <= maxDelta) return to;
+  return from + Math.sign(diff) * maxDelta;
+}
+
 export const dist2 = (ax: number, ay: number, bx: number, by: number): number => {
   const dx = ax - bx;
   const dy = ay - by;

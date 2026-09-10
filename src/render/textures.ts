@@ -1,5 +1,7 @@
 import * as Phaser from 'phaser';
 import { CLASSES, CLASS_ORDER } from '../sim/classes.js';
+import { UPGRADES, UPGRADE_ORDER } from '../sim/progression.js';
+import type { UpgradeDef } from '../sim/progression.js';
 import { ENEMY_DEFS } from '../sim/enemyTypes.js';
 import { EnemyKind } from '../types.js';
 
@@ -12,6 +14,8 @@ export const TEX = {
   glow: 'tex-glow',
   ring: 'tex-ring',
   decoy: 'tex-decoy',
+  chip: 'tex-chip',
+  powerUp: (id: string) => `tex-powerup-${id}`,
   grid: 'tex-grid',
   vignette: 'tex-vignette',
 } as const;
@@ -32,6 +36,8 @@ export function createTextures(scene: Phaser.Scene): void {
   drawGrid(scene);
   drawBullets(scene);
   drawDecoy(scene);
+  drawChip(scene);
+  for (const id of UPGRADE_ORDER) drawPowerUp(scene, UPGRADES[id]);
 
   for (const id of CLASS_ORDER) drawPlayer(scene, id, CLASSES[id].colour, CLASSES[id].radius);
 
@@ -247,5 +253,93 @@ function drawDecoy(scene: Phaser.Scene): void {
   g.moveTo(c, c - 22).lineTo(c, c + 22);
   g.strokePath();
   g.generateTexture(TEX.decoy, size, size);
+  g.destroy();
+}
+
+/**
+ * A dropped compute chip: a square die with contact pins down both sides.
+ *
+ * Small, so it needs a hard silhouette rather than a glow — the same reason
+ * bullets are built around a dark rim. At this size, detail beyond the pins
+ * would be mush.
+ */
+function drawChip(scene: Phaser.Scene): void {
+  const size = 20;
+  const g = scene.make.graphics({ x: 0, y: 0 }, false);
+
+  g.fillStyle(0x4caf00, 0.22).fillCircle(size / 2, size / 2, size / 2);
+
+  // Pins.
+  g.fillStyle(0x0b1017, 0.85);
+  for (let n = 0; n < 3; n++) {
+    const y = 5 + n * 4;
+    g.fillRect(1, y, 3, 2);
+    g.fillRect(size - 4, y, 3, 2);
+  }
+
+  g.fillStyle(0x0b1017, 0.9).fillRoundedRect(3.5, 3.5, 13, 13, 3);
+  g.fillStyle(0x7cff3d, 1).fillRoundedRect(5, 5, 10, 10, 2);
+  g.fillStyle(0x0b1017, 0.55).fillRect(7.5, 7.5, 5, 5);
+
+  g.generateTexture(TEX.chip, size, size);
+  g.destroy();
+}
+
+/**
+ * A power-up node: a hexagonal container in the upgrade's colour, carrying a
+ * glyph that says what it does at a glance — an arrow for speed, a chevron
+ * stack for fire rate, a burst for damage.
+ */
+function drawPowerUp(scene: Phaser.Scene, def: UpgradeDef): void {
+  const size = 60;
+  const c = size / 2;
+  const r = 20;
+  const g = scene.make.graphics({ x: 0, y: 0 }, false);
+
+  g.fillStyle(def.colour, 0.2).fillCircle(c, c, r + 8);
+
+  const hex = (radius: number) => {
+    g.beginPath();
+    for (let n = 0; n < 6; n++) {
+      const a = (Math.PI / 3) * n - Math.PI / 2;
+      const px = c + Math.cos(a) * radius;
+      const py = c + Math.sin(a) * radius;
+      if (n === 0) g.moveTo(px, py);
+      else g.lineTo(px, py);
+    }
+    g.closePath();
+  };
+
+  g.fillStyle(0x0b1017, 0.9);
+  hex(r + 2);
+  g.fillPath();
+  g.fillStyle(0xffffff, 1);
+  hex(r);
+  g.fillPath();
+  g.fillStyle(def.colour, 1);
+  hex(r - 4);
+  g.fillPath();
+
+  g.fillStyle(0xffffff, 1);
+  if (def.id === 'speed') {
+    // Forward chevron.
+    g.beginPath();
+    g.moveTo(c - 7, c - 9).lineTo(c + 8, c).lineTo(c - 7, c + 9).lineTo(c - 3, c).closePath();
+    g.fillPath();
+  } else if (def.id === 'firerate') {
+    // Three stacked bars, reading as rate.
+    g.fillRect(c - 9, c - 7, 18, 3);
+    g.fillRect(c - 9, c - 1.5, 18, 3);
+    g.fillRect(c - 9, c + 4, 18, 3);
+  } else {
+    // Impact burst.
+    for (let n = 0; n < 8; n++) {
+      const a = (Math.PI / 4) * n;
+      g.fillRect(c + Math.cos(a) * 5 - 1.5, c + Math.sin(a) * 5 - 1.5, 3, 3);
+    }
+    g.fillCircle(c, c, 3.5);
+  }
+
+  g.generateTexture(TEX.powerUp(def.id), size, size);
   g.destroy();
 }

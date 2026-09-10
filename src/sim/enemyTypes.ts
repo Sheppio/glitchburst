@@ -16,6 +16,12 @@ export interface EnemyDef {
   /** Relative spawn weight, scaled by wave number in `HordeEngine`. */
   weight: number;
   score: number;
+  /**
+   * Chips dropped on death. Fixed per kind rather than randomised: every
+   * client spawns these independently from the same death event, so a random
+   * count would leave clients disagreeing about what is on the floor.
+   */
+  chipDrop: number;
   /** Present only on ranged enemies. */
   ranged?: {
     /** The drone tries to hover at this distance from its target. */
@@ -40,6 +46,7 @@ export const ENEMY_DEFS: Record<EnemyKind, EnemyDef> = {
     colour: 0xff2d95,
     weight: 68,
     score: 10,
+    chipDrop: 1,
   },
   [EnemyKind.FirewallDrone]: {
     kind: EnemyKind.FirewallDrone,
@@ -53,6 +60,7 @@ export const ENEMY_DEFS: Record<EnemyKind, EnemyDef> = {
     colour: 0xffb300,
     weight: 24,
     score: 25,
+    chipDrop: 2,
     ranged: {
       preferredRange: 300,
       fireIntervalSec: 1.7,
@@ -73,6 +81,7 @@ export const ENEMY_DEFS: Record<EnemyKind, EnemyDef> = {
     colour: 0x7a5cff,
     weight: 8,
     score: 60,
+    chipDrop: 4,
   },
 };
 

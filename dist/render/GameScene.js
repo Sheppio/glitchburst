@@ -1,13 +1,14 @@
 import * as Phaser from 'phaser';
-import { HORDE, NET, RENDER, WORLD } from '../config.js';
+import { HORDE, NET, RENDER, TURN_RATE_RAD_PER_SEC, WORLD } from '../config.js';
 import { HAPTIC } from '../input/settings.js';
 import { decodeEvents, decodeField, decodeHorde, decodePause, decodePlayer, encodeDamage, encodeEvents, encodeField, encodeHorde, encodePause, encodePlayer, } from '../net/codec.js';
 import { Topics, segment } from '../net/topics.js';
 import { CLASSES } from '../sim/classes.js';
 import { ENEMY_DEFS } from '../sim/enemyTypes.js';
 import { HordeEngine } from '../sim/HordeEngine.js';
+import { PROGRESSION, PlayerProgress, UPGRADES, UPGRADE_ORDER } from '../sim/progression.js';
 import { EnemyKind, FLAG_ABILITY, FLAG_DOWN, FLAG_FIRING } from '../types.js';
-import { clamp, counterId, dist2 } from '../util.js';
+import { approachAngle, clamp, counterId, dist2, lerpAngle } from '../util.js';
 import { DAMAGE_RED, Fx } from './fx.js';
 import { glide, smoothing } from './lerp.js';
 import { TEX } from './textures.js';
@@ -67,6 +68,10 @@ export class GameScene extends Phaser.Scene {
     fields = new Map();
     bullets = [];
     enemyBullets = [];
+    chips = [];
+    powerUps = [];
+    /** This player's run progress. Never leaves the client. */
+    progress = new PlayerProgress();
     fireCooldown = 0;
     abilityCooldown = 0;
     abilityActiveUntil = 0;
@@ -166,6 +171,8 @@ export class GameScene extends Phaser.Scene {
         this.updateBullets(dt);
         this.updateEnemyBullets(dt);
         this.updateFields(dt);
+        this.updateChips(dt);
+        this.updatePowerUps(dt);
         // Enemy motion is interpolated identically whether this client is the host
         // or a peer: the host's own simulation only refreshes targets at 20Hz too.
         this.interpolateEnemies(delta);
@@ -193,16 +200,22 @@ export class GameScene extends Phaser.Scene {
                 this.respawn();
             return;
         }
-        const speed = this.def.speed * (boosted ? 1.35 : 1);
+        const speed = this.def.speed * (boosted ? 1.35 : 1) * this.progress.speedMultiplier;
         this.me.x = clamp(this.me.x + intent.moveX * speed * dt, 24, WORLD.width - 24);
         this.me.y = clamp(this.me.y + intent.moveY * speed * dt, 24, WORLD.height - 24);
-        this.me.angle = intent.aim;
-        this.player.setPosition(this.me.x, this.me.y).setRotation(intent.aim).setAlpha(1);
+        // Turn toward the requested angle at a fixed rate rather than snapping to
+        // it. Shots leave along the barrel's real facing (see fireWeapon below), so
+        // this is a mechanic, not a cosmetic: you cannot snap-fire behind you, and
+        // auto-aim visibly swings onto its target.
+        this.me.angle = approachAngle(this.me.angle, intent.aim, TURN_RATE_RAD_PER_SEC * dt);
+        this.player.setPosition(this.me.x, this.me.y).setRotation(this.me.angle).setAlpha(1);
         this.playerAura.setPosition(this.me.x, this.me.y).setAlpha(boosted ? 0.55 : 0.22);
         this.fireCooldown -= dt;
         this.abilityCooldown -= dt;
+        // Fire along the chassis, not the request: the turn rate has to cost
+        // something or it is just an animation.
         if (intent.firing && this.fireCooldown <= 0)
-            this.fireWeapon(intent.aim, boosted);
+            this.fireWeapon(this.me.angle, boosted);
         if (intent.abilityPressed && this.abilityCooldown <= 0)
             this.activateAbility();
         this.me.flags =
@@ -211,7 +224,10 @@ export class GameScene extends Phaser.Scene {
     }
     fireWeapon(angle, boosted) {
         const w = this.def.weapon;
-        this.fireCooldown = w.fireIntervalSec / (boosted ? this.def.ability.magnitude : 1);
+        this.fireCooldown =
+            (w.fireIntervalSec * this.progress.fireIntervalMultiplier) /
+                (boosted ? this.def.ability.magnitude : 1);
+        const damage = w.damage * this.progress.damageMultiplier;
         const step = w.pellets > 1 ? w.spread / (w.pellets - 1) : 0;
         const start = angle - w.spread / 2;
         for (let n = 0; n < w.pellets; n++) {
@@ -222,7 +238,7 @@ export class GameScene extends Phaser.Scene {
             bullet.vx = Math.cos(a) * w.speed;
             bullet.vy = Math.sin(a) * w.speed;
             bullet.life = w.lifeSec;
-            bullet.damage = w.damage;
+            bullet.damage = damage;
             bullet.pierce = w.pierce;
             bullet.radius = w.radius;
             bullet.knockback = w.knockback;
@@ -797,6 +813,174 @@ export class GameScene extends Phaser.Scene {
             this.enemies.delete(id);
         }
         this.fx.enemyBurst(x, y, def.colour, kind === EnemyKind.TrojanTank ? 2 : 1);
+        this.spawnChips(x, y, def.chipDrop, id);
+    }
+    /* ------------------------------------------------------------ progression */
+    /**
+     * Drop chips where an enemy died.
+     *
+     * Chips are spawned independently on **every** client and collected purely
+     * locally — they never touch the wire. That is worth being explicit about,
+     * because the obvious alternative (host owns the loot, clients ask to pick it
+     * up) is worse in every dimension that matters here: it adds a round trip to
+     * the most tactile interaction in the game, it needs arbitration for two
+     * players reaching the same chip, and it makes pickups feel laggy on exactly
+     * the connection that is already struggling.
+     *
+     * Making them per-player costs nothing on the network (deaths are already
+     * broadcast), removes the race entirely, and is better co-op design besides:
+     * nobody competes with their squad for loot, and a player who joins a fight
+     * late is not starved of progression.
+     *
+     * The drop count is fixed per enemy kind and the scatter is derived from the
+     * enemy id, so every client independently produces the same pile.
+     */
+    spawnChips(x, y, count, enemyId) {
+        const seed = enemyId.charCodeAt(enemyId.length - 1) + enemyId.length;
+        for (let n = 0; n < count; n++) {
+            if (this.chips.filter((c) => c.active).length >= PROGRESSION.maxChips)
+                return;
+            const angle = (((seed * 31 + n * 97) % 360) * Math.PI) / 180;
+            const chip = this.takeChip();
+            chip.x = x;
+            chip.y = y;
+            // A small outward pop so a stack of four reads as four, not one.
+            chip.vx = Math.cos(angle) * 90;
+            chip.vy = Math.sin(angle) * 90;
+            chip.ttl = PROGRESSION.chipTtlSec;
+            chip.active = true;
+            chip.sprite.setPosition(x, y).setVisible(true).setAlpha(1).setScale(1);
+        }
+    }
+    updateChips(dt) {
+        const collectable = this.downedFor <= 0;
+        for (const chip of this.chips) {
+            if (!chip.active)
+                continue;
+            chip.ttl -= dt;
+            if (chip.ttl <= 0) {
+                chip.active = false;
+                chip.sprite.setVisible(false);
+                continue;
+            }
+            // Scatter velocity bleeds off quickly; magnetism takes over after that.
+            chip.vx *= 0.88;
+            chip.vy *= 0.88;
+            if (collectable) {
+                const dx = this.me.x - chip.x;
+                const dy = this.me.y - chip.y;
+                const d2 = dx * dx + dy * dy;
+                if (d2 <= PROGRESSION.pickupRadius * PROGRESSION.pickupRadius) {
+                    chip.active = false;
+                    chip.sprite.setVisible(false);
+                    this.collectChip();
+                    continue;
+                }
+                if (d2 <= PROGRESSION.magnetRadius * PROGRESSION.magnetRadius) {
+                    // Pull harder the closer it gets, so collection snaps rather than drifts.
+                    const d = Math.sqrt(d2) || 1;
+                    const pull = PROGRESSION.magnetSpeed * (1 - d / PROGRESSION.magnetRadius) + 120;
+                    chip.vx += (dx / d) * pull * dt * 6;
+                    chip.vy += (dy / d) * pull * dt * 6;
+                }
+            }
+            chip.x += chip.vx * dt;
+            chip.y += chip.vy * dt;
+            chip.sprite.setPosition(chip.x, chip.y);
+            // Blink out the last couple of seconds so an expiring chip is not a surprise.
+            if (chip.ttl < 2.5)
+                chip.sprite.setAlpha(0.35 + Math.sin(this.time.now / 60) * 0.35);
+        }
+    }
+    collectChip() {
+        this.score += 1;
+        const earned = this.progress.addChip();
+        this.fx.chipSpark(this.me.x, this.me.y);
+        if (earned)
+            this.spawnPowerUp();
+    }
+    /** A completed set of chips materialises as a power-up beside the player. */
+    spawnPowerUp() {
+        const upgrade = this.progress.rollUpgrade();
+        if (!upgrade) {
+            // Everything is maxed; bank the set as score instead of dropping a dud.
+            this.score += 250;
+            this.cfg.onBanner('FULLY OPTIMISED', '+250');
+            return;
+        }
+        const angle = Math.random() * Math.PI * 2;
+        const powerUp = this.takePowerUp();
+        powerUp.upgrade = upgrade;
+        powerUp.x = clamp(this.me.x + Math.cos(angle) * PROGRESSION.spawnRadius, 40, WORLD.width - 40);
+        powerUp.y = clamp(this.me.y + Math.sin(angle) * PROGRESSION.spawnRadius, 40, WORLD.height - 40);
+        powerUp.ttl = PROGRESSION.powerUpTtlSec;
+        powerUp.active = true;
+        powerUp.sprite
+            .setTexture(TEX.powerUp(upgrade))
+            .setPosition(powerUp.x, powerUp.y)
+            .setVisible(true)
+            .setAlpha(1)
+            .setScale(0.2);
+        this.tweens.add({ targets: powerUp.sprite, scale: 1, duration: 320, ease: 'Back.easeOut' });
+        this.fx.ring(powerUp.x, powerUp.y, 90, UPGRADES[upgrade].colour, 420);
+        this.cfg.onBanner('POWER-UP READY', UPGRADES[upgrade].name);
+    }
+    updatePowerUps(dt) {
+        for (const powerUp of this.powerUps) {
+            if (!powerUp.active)
+                continue;
+            powerUp.ttl -= dt;
+            if (powerUp.ttl <= 0) {
+                powerUp.active = false;
+                powerUp.sprite.setVisible(false);
+                continue;
+            }
+            // Bob and spin: a stationary hexagon on a static floor is easy to miss.
+            powerUp.sprite.setY(powerUp.y + Math.sin(this.time.now / 260) * 5);
+            powerUp.sprite.setRotation(Math.sin(this.time.now / 700) * 0.22);
+            if (powerUp.ttl < 4)
+                powerUp.sprite.setAlpha(0.4 + Math.sin(this.time.now / 80) * 0.4);
+            if (this.downedFor > 0)
+                continue;
+            const reach = PROGRESSION.powerUpPickupRadius + this.def.radius;
+            if (dist2(this.me.x, this.me.y, powerUp.x, powerUp.y) > reach * reach)
+                continue;
+            powerUp.active = false;
+            powerUp.sprite.setVisible(false);
+            this.applyUpgrade(powerUp.upgrade);
+        }
+    }
+    applyUpgrade(id) {
+        const def = UPGRADES[id];
+        if (!this.progress.grant(id))
+            return;
+        this.fx.ring(this.me.x, this.me.y, 150, def.colour, 480);
+        this.fx.upgradeText(this.me.x, this.me.y - 40, def.blurb, def.colour);
+        this.cfg.onBanner(def.name.toUpperCase(), `${def.blurb} · ${this.progress.stacks[id]} stacks`);
+        this.cameras.main.flash(140, 255, 255, 255, false);
+        this.cfg.input.triggerRumble(0.5, 0.3, 130);
+    }
+    takeChip() {
+        const free = this.chips.find((c) => !c.active);
+        if (free)
+            return free;
+        const chip = {
+            sprite: this.add.image(0, 0, TEX.chip).setDepth(12),
+            x: 0, y: 0, vx: 0, vy: 0, ttl: 0, active: false,
+        };
+        this.chips.push(chip);
+        return chip;
+    }
+    takePowerUp() {
+        const free = this.powerUps.find((p) => !p.active);
+        if (free)
+            return free;
+        const powerUp = {
+            sprite: this.add.image(0, 0, TEX.powerUp('damage')).setDepth(14),
+            upgrade: 'damage', x: 0, y: 0, ttl: 0, active: false,
+        };
+        this.powerUps.push(powerUp);
+        return powerUp;
     }
     /** Anything absent from the newest full snapshot no longer exists. */
     pruneUnseen() {
@@ -844,7 +1028,9 @@ export class GameScene extends Phaser.Scene {
             const s = remote.state;
             remote.sprite.x += (s.x - remote.sprite.x) * t;
             remote.sprite.y += (s.y - remote.sprite.y) * t;
-            remote.sprite.setRotation(s.angle).setAlpha((s.flags & FLAG_DOWN) !== 0 ? 0.3 : 0.95);
+            remote.sprite
+                .setRotation(lerpAngle(remote.sprite.rotation, s.angle, t))
+                .setAlpha((s.flags & FLAG_DOWN) !== 0 ? 0.3 : 0.95);
             remote.aura.setPosition(remote.sprite.x, remote.sprite.y).setAlpha((s.flags & FLAG_ABILITY) !== 0 ? 0.5 : 0.18);
             remote.label.setPosition(remote.sprite.x, remote.sprite.y - 34);
         }
@@ -941,6 +1127,13 @@ export class GameScene extends Phaser.Scene {
             downed: this.downedFor > 0,
             respawnIn: Math.max(0, this.downedFor),
             players: this.cfg.room.squadSize,
+            chips: this.progress.chips,
+            chipsPerPowerUp: PROGRESSION.chipsPerPowerUp,
+            upgrades: UPGRADE_ORDER.map((id) => ({
+                short: UPGRADES[id].short,
+                cssColour: UPGRADES[id].cssColour,
+                stacks: this.progress.stacks[id],
+            })),
             paused: this.paused,
             pausedBy: this.pausedBy,
             canPause: this.cfg.room.isHost,

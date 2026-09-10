@@ -147,6 +147,10 @@ export class UI {
     this.text('ability-name', s.abilityName);
     this.text('ability-state', s.abilityReady ? 'READY' : `${s.abilityRemaining.toFixed(1)}s`);
 
+    this.text('chips-count', `${s.chips} / ${s.chipsPerPowerUp}`);
+    this.el('chips-fill').style.width = `${(s.chips / Math.max(1, s.chipsPerPowerUp)) * 100}%`;
+    this.renderUpgrades(s.upgrades);
+
     // Pause is host-only: peers see the veil but get no control, because the
     // horde they would be resuming does not run on their machine.
     const pauseButton = this.el('btn-pause');
@@ -165,6 +169,24 @@ export class UI {
     this.el('chip-autofire').setAttribute('aria-pressed', String(this.settings.current.autoFire));
 
     this.renderSquad(s.squad);
+  }
+
+  /** Stack counts per upgrade. Dimmed until the player owns at least one. */
+  private renderUpgrades(upgrades: HudSnapshot['upgrades']): void {
+    const host = this.el('upgrade-stacks');
+    const signature = upgrades.map((u) => `${u.short}${u.stacks}`).join('|');
+    if (host.dataset['sig'] === signature) return;
+    host.dataset['sig'] = signature;
+
+    host.replaceChildren(
+      ...upgrades.map((u) => {
+        const chip = document.createElement('span');
+        chip.className = `upgrade-stack${u.stacks > 0 ? ' owned' : ''}`;
+        chip.style.setProperty('--accent', u.cssColour);
+        chip.textContent = u.stacks > 0 ? `${u.short} ×${u.stacks}` : u.short;
+        return chip;
+      }),
+    );
   }
 
   private renderSquad(squad: HudSnapshot['squad']): void {

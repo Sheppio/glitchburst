@@ -75,6 +75,25 @@ export const DIFFICULTY = {
     /** Solo play gets a small handicap so one player can hold a lane. */
     soloHealthDiscount: 0.9,
 };
+export const PLAYER = {
+    /**
+     * Maximum weapon/body turn rate, in revolutions per minute.
+     *
+     * The player no longer snaps to the aim angle; the chassis rotates toward it
+     * at this rate and shots leave along the barrel's *actual* facing. That gives
+     * aiming weight, and it means auto-aim visibly swings onto a target instead
+     * of teleporting the crosshair — which is the whole reason to have it.
+     *
+     * Scale, so this is tunable with intent: 240 RPM is 4 turns a second, or a
+     * 180-degree spin in ~0.13s — fast enough to feel responsive, slow enough to
+     * see. 60 RPM (one turn a second) already feels sluggish for a twin-stick.
+     * Note that 2 RPM would be one revolution every 30 seconds, which is not a
+     * playable value; the units here are per minute, not per second.
+     */
+    turnRateRpm: 240,
+};
+/** Derived once: RPM -> radians per second. */
+export const TURN_RATE_RAD_PER_SEC = (PLAYER.turnRateRpm * Math.PI * 2) / 60;
 export const AI = {
     /**
      * How far a decoy reaches, in world pixels per priority step above a player.

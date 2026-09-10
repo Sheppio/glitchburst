@@ -162,6 +162,115 @@ await step('broadcast rate survives a starved renderer', async () => {
   };
 });
 
+await step('killed enemies drop chips', async () => {
+  const dropped = await page.evaluate(async () => {
+    const scene = window.glitchburst.game.scene.getScene('game');
+    const before = scene.chips.filter((c) => c.active).length;
+    const banked = scene.progress.totalChips;
+
+    // Kill enemies well away from the player, or the magnet collects the chips
+    // inside the sampling window and the floor looks empty.
+    const farX = scene.me.x > 1200 ? 220 : 2180;
+    const farY = scene.me.y > 800 ? 220 : 1380;
+    const ids = [...scene.horde.enemies.keys()].slice(0, 3);
+    for (const id of ids) {
+      const enemy = scene.horde.enemies.get(id);
+      enemy.x = farX;
+      enemy.y = farY;
+      scene.horde.reportDamage(id, 99999, 'test');
+    }
+    await new Promise((r) => setTimeout(r, 500));
+    return {
+      before,
+      after: scene.chips.filter((c) => c.active).length,
+      killed: ids.length,
+      collected: scene.progress.totalChips - banked,
+    };
+  });
+  return {
+    ok: dropped.after > dropped.before && dropped.collected === 0,
+    note: `${dropped.killed} kills left ${dropped.after - dropped.before} chips lying at range`,
+  };
+});
+
+await step('chips are drawn to the player and collected', async () => {
+  const result = await page.evaluate(async () => {
+    const scene = window.glitchburst.game.scene.getScene('game');
+    const chip = scene.chips.find((c) => c.active);
+    if (!chip) return { ok: false, why: 'no chip on the floor' };
+    // Drop one just outside the pickup radius but inside the magnet radius.
+    chip.x = scene.me.x + 120;
+    chip.y = scene.me.y;
+    chip.vx = 0;
+    chip.vy = 0;
+    chip.ttl = 20;
+    const banked = scene.progress.totalChips;
+    await new Promise((r) => setTimeout(r, 900));
+    return { ok: scene.progress.totalChips > banked, why: '' };
+  });
+  return { ok: result.ok, note: result.ok ? 'magnetised and banked' : result.why };
+});
+
+await step('a full set of chips converts into a power-up', async () => {
+  const out = await page.evaluate(async () => {
+    const scene = window.glitchburst.game.scene.getScene('game');
+    const need = scene.progress.chips;
+    const perSet = window.glitchburst.game.registry.get('chipsPerPowerUp') ?? 10;
+    for (let i = 0; i < perSet - need; i++) scene.collectChip();
+    await new Promise((r) => setTimeout(r, 300));
+    return {
+      powerUps: scene.powerUps.filter((p) => p.active).length,
+      chips: scene.progress.chips,
+    };
+  });
+  return { ok: out.powerUps > 0, note: `${out.powerUps} power-up spawned, counter back to ${out.chips}` };
+});
+
+await step('collecting a power-up upgrades the player', async () => {
+  const out = await page.evaluate(async () => {
+    const scene = window.glitchburst.game.scene.getScene('game');
+    const powerUp = scene.powerUps.find((p) => p.active);
+    if (!powerUp) return { ok: false, why: 'no power-up present' };
+    const before = { ...scene.progress.stacks };
+    const dmg = scene.progress.damageMultiplier;
+    const spd = scene.progress.speedMultiplier;
+    const rof = scene.progress.fireIntervalMultiplier;
+    // Walk it onto the player.
+    powerUp.x = scene.me.x;
+    powerUp.y = scene.me.y;
+    await new Promise((r) => setTimeout(r, 300));
+    const after = scene.progress.stacks;
+    const gained = Object.keys(after).find((k) => after[k] > before[k]);
+    const changed =
+      scene.progress.damageMultiplier !== dmg ||
+      scene.progress.speedMultiplier !== spd ||
+      scene.progress.fireIntervalMultiplier !== rof;
+    return { ok: Boolean(gained) && changed, why: gained ?? 'no stack gained', gained };
+  });
+  return { ok: out.ok, note: out.ok ? `gained a ${out.gained} stack` : out.why };
+});
+
+await step('the player turns at a limited rate instead of snapping', async () => {
+  const out = await page.evaluate(async () => {
+    const scene = window.glitchburst.game.scene.getScene('game');
+    scene.me.angle = 0;
+    // Ask for a half turn and sample how the chassis gets there.
+    scene.cfg.input.aimAssist = () => ({ x: scene.me.x - 500, y: scene.me.y });
+    window.glitchburst.settings.set('autoAim', true);
+    const samples = [];
+    for (let i = 0; i < 6; i++) {
+      await new Promise((r) => requestAnimationFrame(r));
+      samples.push(scene.me.angle);
+    }
+    return { first: samples[0], samples };
+  });
+  // A snap would put the very first sample at the target; a rate limit walks it.
+  return {
+    ok: Math.abs(out.first) > 0 && Math.abs(out.first) < Math.PI - 0.01,
+    note: `first frame moved to ${((out.first * 180) / Math.PI).toFixed(0)} degrees, not 180`,
+  };
+});
+
 const positions = () => page.evaluate(() => {
   const scene = window.glitchburst.game.scene.getScene('game');
   return [...scene.enemies.values()].map((v) => `${Math.round(v.sprite.x)},${Math.round(v.sprite.y)}`).join('|');
