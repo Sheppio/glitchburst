@@ -37,6 +37,21 @@ await step('settings toggles render', async () => {
   return { ok: count === 5, note: `${count} toggles` };
 });
 
+await step('the callsign and class are remembered across a reload', async () => {
+  await page.click('#btn-create');
+  await page.fill('#input-callsign', 'PERSIST');
+  await page.click('.class-card[data-cls="encoder"]');
+  // A clean navigation, not a reload: creating a room rewrites the URL with a
+  // ?room= param, which would land the reload on the join screen instead.
+  await page.goto(url, { waitUntil: 'networkidle' });
+  await page.click('#btn-create');
+  const restored = await page.inputValue('#input-callsign');
+  const cls = await page.getAttribute('.class-card[data-cls="encoder"]', 'aria-pressed');
+  // Hand the next step a clean menu rather than the class screen.
+  await page.click('#btn-class-back');
+  return { ok: restored === 'PERSIST' && cls === 'true', note: `restored "${restored}" as Encoder` };
+});
+
 await step('create room generates a code', async () => {
   await page.click('#btn-create');
   const code = (await page.textContent('#room-code-label'))?.trim();

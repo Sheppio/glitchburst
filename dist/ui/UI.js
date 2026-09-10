@@ -1,5 +1,8 @@
 import { BROKERS } from '../config.js';
-import { CLASSES, CLASS_ORDER } from '../sim/classes.js';
+import { CLASSES, CLASS_ORDER, isClassId } from '../sim/classes.js';
+/** Where the player's callsign and last class are remembered between visits. */
+const CALLSIGN_KEY = 'glitchburst.callsign';
+const CLASS_KEY = 'glitchburst.class';
 const TOGGLES = [
     {
         key: 'autoFire',
@@ -36,12 +39,30 @@ const TOGGLES = [
  * which is what makes the whole front end usable on a console without a
  * virtual pointer.
  */
+/**
+ * Last class played, restored on load.
+ *
+ * Validated against the class table rather than trusted: stored values outlive
+ * code, and a class removed in a later build must not leave the selector
+ * pointing at something that no longer exists.
+ */
+function readStoredClass() {
+    try {
+        const saved = localStorage.getItem(CLASS_KEY);
+        if (saved && isClassId(saved))
+            return saved;
+    }
+    catch {
+        /* storage unavailable */
+    }
+    return 'overclocker';
+}
 export class UI {
     root;
     settings;
     callbacks;
     screens = new Map();
-    selectedClass = 'overclocker';
+    selectedClass = readStoredClass();
     bannerTimer = 0;
     current = 'menu';
     constructor(root, settings, callbacks) {
@@ -51,6 +72,7 @@ export class UI {
         for (const el of root.querySelectorAll('[data-screen]')) {
             this.screens.set(el.dataset['screen'], el);
         }
+        this.restoreCallsign();
         this.buildBrokerList();
         this.buildClassGrid();
         this.buildToggles();
@@ -65,6 +87,32 @@ export class UI {
     }
     get callsign() {
         return this.input('input-callsign').value.trim() || 'ANON';
+    }
+    /**
+     * Remember the callsign across reloads.
+     *
+     * Stored on input rather than on deploy, so a name typed and then abandoned
+     * mid-flow is still there next time — the failure mode this fixes is retyping
+     * your name on every refresh, and half-finished attempts count.
+     */
+    restoreCallsign() {
+        const field = this.input('input-callsign');
+        try {
+            const saved = localStorage.getItem(CALLSIGN_KEY);
+            if (saved)
+                field.value = saved;
+        }
+        catch {
+            // Private browsing, or storage blocked. An empty field is a fine default.
+        }
+        field.addEventListener('input', () => {
+            try {
+                localStorage.setItem(CALLSIGN_KEY, field.value.trim().slice(0, 14));
+            }
+            catch {
+                /* nothing to do — this session just will not remember it */
+            }
+        });
     }
     show(screen) {
         this.current = screen;
@@ -236,6 +284,12 @@ export class UI {
     }
     selectClass(id) {
         this.selectedClass = id;
+        try {
+            localStorage.setItem(CLASS_KEY, id);
+        }
+        catch {
+            /* storage unavailable — the choice simply will not survive a reload */
+        }
         for (const card of this.root.querySelectorAll('.class-card')) {
             card.setAttribute('aria-pressed', String(card.dataset['cls'] === id));
         }
