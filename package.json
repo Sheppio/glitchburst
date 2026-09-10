@@ -13,7 +13,8 @@
     "test:sim": "node test/sim.test.mjs",
     "test:smoke": "node test/smoke.test.mjs",
     "test:mp": "node test/multiplayer.test.mjs",
-    "test:mobile": "node test/mobile.test.mjs"
+    "test:mobile": "node test/mobile.test.mjs",
+    "test:count": "node test/count.mjs"
   },
   "devDependencies": {
     "mqtt": "5.15.2",

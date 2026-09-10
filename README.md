@@ -36,7 +36,7 @@ Developing needs the compiler:
 ```bash
 npm install
 npm run watch      # tsc --watch, rebuilding dist/ on save
-npm test           # 85 tests: simulation, codec, single client, mobile, two clients
+npm test           # 141 tests: simulation, codec, single client, mobile, two clients
 ```
 
 `dist/` is committed on purpose — it is what GitHub Pages serves.
@@ -161,12 +161,18 @@ horde spreads out instead of stacking, which stays ~O(n) at the cap.
 
 ## Classes
 
-| | Role | Weapon | Ability |
-| --- | --- | --- | --- |
-| **Overclocker** | DPS | Overclocked Laser — piercing beam | +90% fire rate, +35% speed for 5s |
-| **Fireman** | Tank | EMP Shotgun — 7 pellets, short range | Purge Pulse — knockback + stun in 265px |
-| **Glitcher** | Utility | Fork Bomb SMG | Decoy Hologram — the horde chases it for 5s |
-| **Encoder** | Support | Parity Lance | Checksum Field — heals allies inside for 8s |
+| | Role | DPS | HP | Range | Ability |
+| --- | --- | --- | --- | --- | --- |
+| **Overclocker** | DPS | 116 | 100 | 825 | +90% fire rate, +35% speed for 5s |
+| **Fireman** | Tank | 90 | 190 | 246 | Purge Pulse — knockback + stun in 265px |
+| **Glitcher** | Utility | 69 | 90 | 765 | Decoy Hologram — the horde chases it for 5s |
+| **Encoder** | Support | 59 | 120 | 658 | Checksum Field — heals allies inside for 8s |
+
+Those figures are on the class-select cards. The quoted DPS discounts spread
+weapons by a pellet-connection factor, so the Fireman reads 90 rather than its
+paper 150 — that only lands with all seven pellets on one target at point-blank.
+One definition in `classes.ts` feeds both the card and the auto-aim scorer, so
+the number shown is the number the game reasons with.
 
 Classes are **data**: a `ClassDef` drives the weapon entirely, and abilities
 dispatch on one `switch`. A fifth class is a table entry plus one case.
@@ -195,6 +201,47 @@ when they joined.
 | **Skittering Glitch Bug** | 30 | fast | charges straight in |
 | **Rogue Firewall Drone** | 58 | medium | hovers at ~300px, strafes, fires |
 | **Trojan Tank** | 265 | slow | walks through everything |
+
+## Progression
+
+Dead malware drops **compute chips**. Ten convert into a **power-up** that
+materialises beside you; walking into it grants a stacking upgrade — damage
+(+18%), movement speed (+8%) or fire rate (+11%), each capped. Firewall Drones
+(6%) and Trojan Tanks (22%) can also drop one outright, so committing to a tank
+while a wave closes is a decision rather than a chore.
+
+Rolls are weighted toward whatever you have least of, so a long run broadens a
+build instead of dumping a twelfth damage stack on someone who has never seen a
+speed boost.
+
+**Chips never touch the wire.** Every client spawns them independently from
+death events it already receives, and each player collects their own. The
+obvious alternative — host owns the loot, clients ask to pick it up — is worse
+in every dimension that matters: a round trip on the most tactile interaction in
+the game, arbitration when two players reach the same chip, and pickups feeling
+laggy on exactly the connection already struggling. Per-player costs nothing,
+removes the race, and is better co-op design: nobody competes with their squad
+for loot. Drop counts are fixed per kind and both the scatter and the rare-drop
+roll derive from the enemy id, so every client produces the same pile.
+
+Chips accelerate toward you without damping once they latch on. That asymmetry
+is deliberate: you have a top speed and a chip does not, so a chip can never be
+outrun.
+
+## Wave pacing
+
+A fixed interval cannot work here. Wave size grows linearly and enemy health
+grows with it, so the damage a wave represents grows roughly **quadratically**.
+Against a constant timer, the DPS needed to keep up outruns any possible player
+by about wave five and the field saturates at the enemy cap shortly after — the
+original 14-second timer needed 154 DPS by wave 5 and 289 by wave 8, against a
+best case of 116. No amount of skill closes a quadratic gap.
+
+So the timer scales with the size of the wave it is pacing, and clearing the
+field early pulls the next wave forward, subject to a five-second floor.
+Required DPS then grows roughly linearly, and the game responds to how you are
+actually doing: play well and waves come faster (and so do chips), struggle and
+the full window is there to recover in.
 
 ## Difficulty (1–4 players)
 
@@ -228,6 +275,46 @@ client joining a paused room learns about it within 500 ms.
 
 Peers see the veil but get no resume control. Leave stays clickable while
 paused.
+
+## Aiming
+
+The chassis **turns at a fixed rate** rather than snapping to the aim angle, and
+shots leave along the barrel's actual facing — so it is a mechanic, not an
+animation: you cannot snap-fire behind you, and auto-aim visibly swings onto its
+target. Tunable via `PLAYER.turnRateRpm` (default 240 RPM: four turns a second,
+a 180-degree spin in 133 ms).
+
+Auto-aim scores every candidate by **how long it would take to eliminate**, not
+by distance. Nearest-enemy is the obvious rule and the wrong one — it abandons
+an enemy you are one shot from killing the moment something healthier wanders
+closer, so damage smears across a crowd and nothing dies. Three costs, all in
+seconds so they simply add:
+
+```
+score = timeToAim + timeToReach + timeToKill + rangePenalty
+```
+
+An enemy at 5% health has a near-zero `timeToKill` and keeps the lock even once
+something healthier gets nearer. The held target gets a 28% discount so
+near-equal candidates cannot flip-flop and leave the barrel jittering between
+two enemies while hitting neither. Targets beyond weapon range are penalised
+rather than excluded — facing a distant threat beats facing nothing.
+
+It lives in `sim/targeting.ts` as pure functions with the constants in
+`TARGETING`, so the formula is unit tested and tunable directly.
+
+## Seeing the rest of the squad
+
+Clients broadcast **trigger pulls, not projectiles** — origin and angle only,
+batched at the player-state cadence and published only when there is something
+to send. Pellet count, spread, speed and lifetime are rebuilt from the shooter's
+class, which every client already knows, so a seven-pellet blast is one
+fourteen-byte record rather than seven messages (~140 B/s per player against the
+horde stream's 36 KB/s).
+
+Remote rounds are explicitly **inert**: zero damage, no collision test. Under
+attacker authority only the shooter's client decides whether its rounds
+connected, so anything else would double-resolve every hit.
 
 ## Controls
 
@@ -301,22 +388,25 @@ for a game — just don't build anything that needs privacy on top of it.
 npm test
 ```
 
-85 checks across four suites. The browser suites vendor Phaser locally and
+141 checks across four suites. The browser suites vendor Phaser locally and
 swap MQTT for a loopback stub that relays over `BroadcastChannel`, so two tabs
 share one "broker" and a real multi-client room can be tested offline.
 
-- **`sim.test.mjs`** (31) — codec round-trips, truncation tolerance, payload
-  size at the cap, enemy cap, difficulty scaling, damage attribution, steering,
-  decoy priority, host adoption, shockwave.
-- **`smoke.test.mjs`** (17) — menus, Phaser boot, election, 20 Hz batching,
-  attacker-authority kills, abilities, pause, and broadcast rate under a
-  starved renderer.
+- **`sim.test.mjs`** (75) — codec round-trips, truncation tolerance, payload
+  size at the cap, enemy cap, difficulty scaling, wave pacing, damage
+  attribution, steering, decoy priority, host adoption, shockwave, progression
+  and upgrade caps, deterministic drop rolls, turn-rate limiting, and the
+  auto-aim scoring formula.
+- **`smoke.test.mjs`** (25) — menus, persistence, Phaser boot, election, 20 Hz
+  batching, attacker-authority kills, point-blank hits, chip pickup and
+  conversion, turn rate, abilities, pause, and broadcast rate under a starved
+  renderer.
 - **`mobile.test.mjs`** (14) — an emulated Pixel with a touchscreen and no
   mouse: taps through the whole flow, and hit-tests that nothing invisible is
   covering the buttons.
-- **`multiplayer.test.mjs`** (23) — two clients: election, peer unpacking,
-  mid-game join, interpolation, squad scaling, pause propagation, and **host
-  failover** with the horde carried through.
+- **`multiplayer.test.mjs`** (27) — two clients: election, peer unpacking,
+  mid-game join, interpolation, squad scaling, seeing each other's fire, pause
+  propagation, and **host failover** with the horde carried through.
 
 These caught eight real bugs. The most instructive:
 
@@ -332,6 +422,22 @@ These caught eight real bugs. The most instructive:
   hit-tests `elementFromPoint` on the buttons for exactly this reason.
 - A `hidden` full-screen overlay still intercepted clicks, because an author
   `display` rule beats the `hidden` attribute.
+- Bullets moved *before* being tested for collision, so a round covering 13px a
+  frame could start in front of an enemy and end behind it having never been
+  measured as touching. At the Overclocker's 1500 px/s that is 25px a frame —
+  wider than a Glitch Bug, so it tunnelled straight through them. Collision now
+  sweeps the whole step.
+- Rounds spawned at the barrel tip, so an enemy pressed against the player sat
+  nearer than the muzzle and the shot spawned past it. Since auto-aim targets
+  the nearest enemy, the one thing you could never hit was the thing eating you.
+- The chip magnet damped velocity every frame *including while pulling*, capping
+  chips below player run speed. They could be outrun.
+- Waves were mathematically unclearable from wave 5 (see **Wave pacing**).
+
+Two CI-only failures were also instructive: the scene clamps `dt` to 50ms a
+frame, so on a slow renderer wall time and simulated time diverge badly — at
+11fps a 900ms sleep is barely 500ms of game time, less than one Fireman fire
+interval. Timing assertions poll for outcomes rather than sleeping.
 
 ### Known limitations
 

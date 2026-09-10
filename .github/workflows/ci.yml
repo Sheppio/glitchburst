@@ -42,6 +42,11 @@ jobs:
             exit 1
           fi
 
+      # Prose drifts from tests silently. This is the same idea as the stale
+      # dist/ check above, applied to the README's coverage claim.
+      - name: Verify the README's test count
+        run: node test/count.mjs
+
   test-sim:
     name: Simulation and codec
     runs-on: ubuntu-latest
