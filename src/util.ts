@@ -58,6 +58,50 @@ export function approachAngle(from: number, to: number, maxDelta: number): numbe
   return from + Math.sign(diff) * maxDelta;
 }
 
+/**
+ * Deterministic 0..1 from a string, via FNV-1a.
+ *
+ * Used for drop rolls: every client must independently agree on whether a given
+ * corpse dropped loot, and they share nothing but the enemy's id. `Math.random`
+ * would have each client seeing a different world.
+ */
+/**
+ * Squared distance from a point to the line *segment* ab.
+ *
+ * This is what makes fast projectiles hit things. Testing only a bullet's
+ * end-of-frame position asks "is it touching now?", but at 1500 px/s a round
+ * covers 25px per frame — comfortably further than a Glitch Bug is wide — so it
+ * can start in front of an enemy and end behind it having never been measured
+ * as touching. Sweeping the whole step closes that gap, and with it the
+ * point-blank case where the target is nearer than one frame of travel.
+ */
+export function segmentDist2(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): number {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  let t = len2 > 0 ? ((px - ax) * dx + (py - ay) * dy) / len2 : 0;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  const cx = ax + dx * t;
+  const cy = ay + dy * t;
+  return (px - cx) ** 2 + (py - cy) ** 2;
+}
+
+export function hashUnit(text: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return ((hash >>> 0) % 100000) / 100000;
+}
+
 export const dist2 = (ax: number, ay: number, bx: number, by: number): number => {
   const dx = ax - bx;
   const dy = ay - by;

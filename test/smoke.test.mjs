@@ -141,9 +141,16 @@ await step('firing produces damage reports (attacker authority)', async () => {
     null, { timeout: 25000 }).catch(() => {});
   const stats = await page.evaluate(() => {
     const scene = window.glitchburst.game.scene.getScene('game');
-    return { score: Number(document.getElementById('hud-score').textContent), bullets: scene.bullets.length };
+    return {
+      hud: Number(document.getElementById('hud-score').textContent),
+      real: scene.score,
+      bullets: scene.bullets.length,
+    };
   });
-  return { ok: stats.score > 0 && stats.bullets > 0, note: `score ${stats.score}, ${stats.bullets} pooled rounds` };
+  return {
+    ok: stats.real > 0 && stats.bullets > 0 && stats.hud === stats.real,
+    note: `score ${stats.real} (HUD shows ${stats.hud}), ${stats.bullets} pooled rounds`,
+  };
 });
 
 await step('ability fields reach the wire', async () => {
@@ -220,10 +227,60 @@ await step('chips are drawn to the player and collected', async () => {
     chip.vy = 0;
     chip.ttl = 20;
     const banked = scene.progress.totalChips;
-    await new Promise((r) => setTimeout(r, 900));
-    return { ok: scene.progress.totalChips > banked, why: '' };
+    await new Promise((r) => setTimeout(r, 500));
+    return { ok: scene.progress.totalChips > banked, why: 'not collected within 500ms' };
   });
-  return { ok: result.ok, note: result.ok ? 'magnetised and banked' : result.why };
+  return { ok: result.ok, note: result.ok ? 'magnetised and banked inside 500ms' : result.why };
+});
+
+await step('a chip cannot be outrun', async () => {
+  const out = await page.evaluate(async () => {
+    const scene = window.glitchburst.game.scene.getScene('game');
+
+    // Drop a chip behind the player, then sprint directly away from it faster
+    // than any class can actually move. Constant acceleration has to win.
+    const away = scene.me.y > 800 ? -1 : 1;
+    scene.spawnChips(scene.me.x, scene.me.y - away * 150, 1, 'outrun-probe');
+
+    const banked = scene.progress.totalChips;
+    const runSpeed = 320; // above every class's top speed
+    const start = performance.now();
+
+    while (performance.now() - start < 2500 && scene.progress.totalChips === banked) {
+      await new Promise((r) => requestAnimationFrame(r));
+      scene.me.y = Math.max(40, Math.min(1560, scene.me.y + (away * runSpeed) / 60));
+    }
+
+    return {
+      collected: scene.progress.totalChips > banked,
+      ms: Math.round(performance.now() - start),
+    };
+  });
+  return {
+    ok: out.collected && out.ms < 2000,
+    note: out.collected ? `caught the fleeing player in ${out.ms}ms` : 'chip was outrun',
+  };
+});
+
+await step('a point-blank enemy is still hittable', async () => {
+  const out = await page.evaluate(async () => {
+    const scene = window.glitchburst.game.scene.getScene('game');
+    const view = [...scene.enemies.values()][0];
+    if (!view) return { ok: false, why: 'no enemy' };
+
+    // Move the simulated entity, not the view: on the host every view position
+    // is rewritten from the engine on the next 20Hz tick, so nudging the sprite
+    // alone would be undone before the next frame.
+    const entity = scene.horde.enemies.get(view.id);
+    if (!entity) return { ok: false, why: 'enemy not in the simulation' };
+    entity.x = scene.me.x + 2;
+    entity.y = scene.me.y + 2;
+    const before = entity.hp;
+    await new Promise((r) => setTimeout(r, 900));
+    const survivor = scene.horde.enemies.get(view.id);
+    return { ok: !survivor || survivor.hp < before, why: `hp stayed at ${before}` };
+  });
+  return { ok: out.ok, note: out.ok ? 'took damage at contact range' : out.why };
 });
 
 await step('a full set of chips converts into a power-up', async () => {

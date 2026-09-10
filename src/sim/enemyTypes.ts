@@ -22,6 +22,12 @@ export interface EnemyDef {
    * count would leave clients disagreeing about what is on the floor.
    */
   chipDrop: number;
+  /**
+   * Chance this kind drops a power-up outright on death, 0..1. Rolled from a
+   * hash of the enemy's id rather than at random, so every client agrees on
+   * which corpse dropped one.
+   */
+  powerUpChance: number;
   /** Present only on ranged enemies. */
   ranged?: {
     /** The drone tries to hover at this distance from its target. */
@@ -47,6 +53,7 @@ export const ENEMY_DEFS: Record<EnemyKind, EnemyDef> = {
     weight: 68,
     score: 10,
     chipDrop: 1,
+    powerUpChance: 0,
   },
   [EnemyKind.FirewallDrone]: {
     kind: EnemyKind.FirewallDrone,
@@ -61,6 +68,7 @@ export const ENEMY_DEFS: Record<EnemyKind, EnemyDef> = {
     weight: 24,
     score: 25,
     chipDrop: 2,
+    powerUpChance: 0.06,
     ranged: {
       preferredRange: 300,
       fireIntervalSec: 1.7,
@@ -82,6 +90,7 @@ export const ENEMY_DEFS: Record<EnemyKind, EnemyDef> = {
     weight: 8,
     score: 60,
     chipDrop: 4,
+    powerUpChance: 0.22,
   },
 };
 

@@ -13,6 +13,7 @@ export const ENEMY_DEFS = {
         weight: 68,
         score: 10,
         chipDrop: 1,
+        powerUpChance: 0,
     },
     [EnemyKind.FirewallDrone]: {
         kind: EnemyKind.FirewallDrone,
@@ -27,6 +28,7 @@ export const ENEMY_DEFS = {
         weight: 24,
         score: 25,
         chipDrop: 2,
+        powerUpChance: 0.06,
         ranged: {
             preferredRange: 300,
             fireIntervalSec: 1.7,
@@ -48,6 +50,7 @@ export const ENEMY_DEFS = {
         weight: 8,
         score: 60,
         chipDrop: 4,
+        powerUpChance: 0.22,
     },
 };
 /** Fragments of "leaked data" that spray out of a corpse. */

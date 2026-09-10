@@ -59,11 +59,23 @@ export const UPGRADE_ORDER: UpgradeId[] = ['damage', 'speed', 'firerate'];
 export const PROGRESSION = {
   /** Chips needed for one power-up. */
   chipsPerPowerUp: 10,
-  /** Chips inside this radius are drawn toward the player. */
-  magnetRadius: 155,
+  /** Chips inside this radius latch on and home in. */
+  magnetRadius: 175,
   /** ...and are collected inside this one. */
   pickupRadius: 30,
-  magnetSpeed: 560,
+  /**
+   * Homing acceleration, px/s^2. A chip under attraction accelerates without
+   * damping, so it always closes: the player has a fixed top speed and the chip
+   * does not, which means a chip can never be outrun. Roughly 0.35s to cross
+   * the magnet radius from a standing start.
+   */
+  magnetAccel: 2600,
+  /** Small kick on latch, so attraction reads instantly rather than creeping. */
+  magnetInitialSpeed: 170,
+  /** Only a tunnelling guard; the overshoot check below is the real safety. */
+  magnetMaxSpeed: 2600,
+  /** Friction on the initial scatter pop, before a chip latches on. */
+  scatterDamping: 0.88,
   /** Chips left on the floor this long are cleaned up. */
   chipTtlSec: 26,
   /** Hard cap on loose chips, so a cleared wave cannot flood the scene. */

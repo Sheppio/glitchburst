@@ -10,7 +10,8 @@ import {
 } from '../dist/net/codec.js';
 import { HORDE, PLAYER, TURN_RATE_RAD_PER_SEC } from '../dist/config.js';
 import { PlayerProgress, PROGRESSION, UPGRADES } from '../dist/sim/progression.js';
-import { approachAngle } from '../dist/util.js';
+import { approachAngle, hashUnit } from '../dist/util.js';
+import { ENEMY_DEFS } from '../dist/sim/enemyTypes.js';
 
 const { check, finish } = reporter('GLITCHBURST — simulation & codec');
 
@@ -226,6 +227,32 @@ const run = (engine, seconds, t = targets(1)) => {
   const dmg = rolls.filter((r) => r === 'damage').length;
   check('rolls favour upgrades the player lacks', dmg / rolls.length < 0.2,
     `${((dmg / rolls.length) * 100).toFixed(1)}% rolled damage after 6 damage stacks`);
+}
+
+/* ------------------------------------------------------------ drop rolls */
+
+{
+  check('the drop roll is deterministic for an id',
+    hashUnit('e42') === hashUnit('e42') && hashUnit('e42') !== hashUnit('e43'));
+
+  const values = Array.from({ length: 4000 }, (_, i) => hashUnit(`e${i.toString(36)}`));
+  check('drop rolls stay in range', values.every((v) => v >= 0 && v < 1));
+
+  // A biased hash would make a "22% chance" fire far more or less often than
+  // stated, and every client would agree on the wrong answer.
+  const tankRate = values.filter((v) => v < ENEMY_DEFS[2].powerUpChance).length / values.length;
+  check('tank power-up rate matches its stated chance',
+    Math.abs(tankRate - ENEMY_DEFS[2].powerUpChance) < 0.03,
+    `${(tankRate * 100).toFixed(1)}% vs ${ENEMY_DEFS[2].powerUpChance * 100}% stated`);
+
+  const bugRate = values.filter((v) => v < ENEMY_DEFS[0].powerUpChance).length;
+  check('glitch bugs never drop power-ups', bugRate === 0);
+
+  check('bigger enemies drop more of everything',
+    ENEMY_DEFS[2].chipDrop > ENEMY_DEFS[1].chipDrop &&
+    ENEMY_DEFS[1].chipDrop > ENEMY_DEFS[0].chipDrop &&
+    ENEMY_DEFS[2].powerUpChance > ENEMY_DEFS[1].powerUpChance,
+    `chips ${ENEMY_DEFS[0].chipDrop}/${ENEMY_DEFS[1].chipDrop}/${ENEMY_DEFS[2].chipDrop}`);
 }
 
 /* ------------------------------------------------------------ turn rate */

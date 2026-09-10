@@ -30,7 +30,7 @@ import { PROGRESSION, PlayerProgress, UPGRADES, UPGRADE_ORDER } from '../sim/pro
 import type { UpgradeId } from '../sim/progression.js';
 import { EnemyKind, FLAG_ABILITY, FLAG_DOWN, FLAG_FIRING } from '../types.js';
 import type { AiTarget, ClassId, EnemyId, FieldEffect, PlayerId, PlayerState, Vec2 } from '../types.js';
-import { approachAngle, clamp, counterId, dist2, lerpAngle } from '../util.js';
+import { approachAngle, clamp, counterId, dist2, hashUnit, lerpAngle, segmentDist2 } from '../util.js';
 import { DAMAGE_RED, Fx } from './fx.js';
 import { glide, smoothing } from './lerp.js';
 import { TEX } from './textures.js';
@@ -128,8 +128,17 @@ interface Chip {
   sprite: Phaser.GameObjects.Image;
   x: number;
   y: number;
+  /** Scatter velocity from the death pop. Unused once homing. */
   vx: number;
   vy: number;
+  /**
+   * Latched once the chip has been inside the magnet radius. It never unlatches:
+   * a chip that starts coming to you should finish the trip even if you run on,
+   * otherwise backing off mid-pull strands it.
+   */
+  homing: boolean;
+  /** Scalar homing speed, growing under constant acceleration. */
+  speed: number;
   ttl: number;
   active: boolean;
 }
@@ -418,8 +427,12 @@ export class GameScene extends Phaser.Scene {
     for (let n = 0; n < w.pellets; n++) {
       const a = w.pellets > 1 ? start + step * n : angle + (Math.random() - 0.5) * w.spread;
       const bullet = this.takeBullet();
-      bullet.x = this.me.x + Math.cos(angle) * (this.def.radius + 8);
-      bullet.y = this.me.y + Math.sin(angle) * (this.def.radius + 8);
+      // Spawn just inside the chassis, not at the barrel tip. An enemy pressed
+      // against the player sits *closer* than the muzzle, so spawning at the
+      // tip put the round past it — and since auto-aim targets the nearest
+      // enemy, the one thing you could never hit was the thing eating you.
+      bullet.x = this.me.x + Math.cos(angle) * (this.def.radius * 0.5);
+      bullet.y = this.me.y + Math.sin(angle) * (this.def.radius * 0.5);
       bullet.vx = Math.cos(a) * w.speed;
       bullet.vy = Math.sin(a) * w.speed;
       bullet.life = w.lifeSec;
@@ -518,6 +531,8 @@ export class GameScene extends Phaser.Scene {
       if (!b.active) continue;
 
       b.life -= dt;
+      const fromX = b.x;
+      const fromY = b.y;
       b.x += b.vx * dt;
       b.y += b.vy * dt;
 
@@ -530,9 +545,11 @@ export class GameScene extends Phaser.Scene {
       for (const enemy of this.enemies.values()) {
         if (b.hit.has(enemy.id)) continue;
         const reach = b.radius + ENEMY_DEFS[enemy.kind].radius;
+        // Sweep the whole step, not just its endpoint — see `segmentDist2`.
         // Written as "not within reach" rather than "beyond reach" so that a
         // non-finite coordinate fails the test instead of passing it.
-        if (!(dist2(b.x, b.y, enemy.sprite.x, enemy.sprite.y) <= reach * reach)) continue;
+        const gap = segmentDist2(enemy.sprite.x, enemy.sprite.y, fromX, fromY, b.x, b.y);
+        if (!(gap <= reach * reach)) continue;
 
         b.hit.add(enemy.id);
         this.reportDamage(enemy.id, b.damage);
@@ -1087,6 +1104,23 @@ export class GameScene extends Phaser.Scene {
     }
     this.fx.enemyBurst(x, y, def.colour, kind === EnemyKind.TrojanTank ? 2 : 1);
     this.spawnChips(x, y, def.chipDrop, id);
+    this.maybeDropPowerUp(x, y, def.powerUpChance, id);
+  }
+
+  /**
+   * Bigger malware sometimes drops a power-up outright, on top of its chips —
+   * so committing to a Trojan Tank while a wave closes in is a decision rather
+   * than a chore.
+   *
+   * The roll is a hash of the enemy id, not `Math.random`, so every client
+   * independently agrees on which corpse dropped one. The *upgrade* it offers
+   * is still rolled per player, because it is weighted against that player's
+   * own build — two players can walk to the same node and each get what their
+   * loadout is short of.
+   */
+  private maybeDropPowerUp(x: number, y: number, chance: number, enemyId: EnemyId): void {
+    if (chance <= 0 || hashUnit(enemyId) >= chance) return;
+    this.spawnPowerUp(x, y);
   }
 
   /* ------------------------------------------------------------ progression */
@@ -1121,6 +1155,8 @@ export class GameScene extends Phaser.Scene {
       // A small outward pop so a stack of four reads as four, not one.
       chip.vx = Math.cos(angle) * 90;
       chip.vy = Math.sin(angle) * 90;
+      chip.homing = false;
+      chip.speed = 0;
       chip.ttl = PROGRESSION.chipTtlSec;
       chip.active = true;
       chip.sprite.setPosition(x, y).setVisible(true).setAlpha(1).setScale(1);
@@ -1140,34 +1176,54 @@ export class GameScene extends Phaser.Scene {
         continue;
       }
 
-      // Scatter velocity bleeds off quickly; magnetism takes over after that.
-      chip.vx *= 0.88;
-      chip.vy *= 0.88;
+      const dx = this.me.x - chip.x;
+      const dy = this.me.y - chip.y;
+      const distance = Math.hypot(dx, dy);
 
-      if (collectable) {
-        const dx = this.me.x - chip.x;
-        const dy = this.me.y - chip.y;
-        const d2 = dx * dx + dy * dy;
+      if (collectable && !chip.homing && distance <= PROGRESSION.magnetRadius) {
+        chip.homing = true;
+        chip.speed = PROGRESSION.magnetInitialSpeed;
+      }
 
-        if (d2 <= PROGRESSION.pickupRadius * PROGRESSION.pickupRadius) {
+      if (chip.homing && collectable) {
+        // Accelerate, never damp. This is the whole point: the player has a top
+        // speed and the chip does not, so the gap always closes. Damping here
+        // (which an earlier version applied every frame) caps the chip at
+        // accel/damping, which landed below player run speed at range — chips
+        // could simply be outrun.
+        chip.speed = Math.min(PROGRESSION.magnetMaxSpeed, chip.speed + PROGRESSION.magnetAccel * dt);
+        const step = chip.speed * dt;
+
+        // Collect on contact, or when this frame's step would carry the chip
+        // past the player — at these speeds a fast chip can cross the whole
+        // pickup radius between frames and would otherwise tunnel straight
+        // through.
+        if (distance <= PROGRESSION.pickupRadius || step >= distance) {
           chip.active = false;
           chip.sprite.setVisible(false);
           this.collectChip();
           continue;
         }
 
-        if (d2 <= PROGRESSION.magnetRadius * PROGRESSION.magnetRadius) {
-          // Pull harder the closer it gets, so collection snaps rather than drifts.
-          const d = Math.sqrt(d2) || 1;
-          const pull = PROGRESSION.magnetSpeed * (1 - d / PROGRESSION.magnetRadius) + 120;
-          chip.vx += (dx / d) * pull * dt * 6;
-          chip.vy += (dy / d) * pull * dt * 6;
+        const inv = 1 / (distance || 1);
+        chip.x += dx * inv * step;
+        chip.y += dy * inv * step;
+        chip.sprite.setPosition(chip.x, chip.y);
+      } else {
+        // Loose on the floor: let the death pop settle out.
+        chip.vx *= PROGRESSION.scatterDamping;
+        chip.vy *= PROGRESSION.scatterDamping;
+        chip.x += chip.vx * dt;
+        chip.y += chip.vy * dt;
+        chip.sprite.setPosition(chip.x, chip.y);
+
+        if (collectable && distance <= PROGRESSION.pickupRadius) {
+          chip.active = false;
+          chip.sprite.setVisible(false);
+          this.collectChip();
+          continue;
         }
       }
-
-      chip.x += chip.vx * dt;
-      chip.y += chip.vy * dt;
-      chip.sprite.setPosition(chip.x, chip.y);
 
       // Blink out the last couple of seconds so an expiring chip is not a surprise.
       if (chip.ttl < 2.5) chip.sprite.setAlpha(0.35 + Math.sin(this.time.now / 60) * 0.35);
@@ -1182,21 +1238,28 @@ export class GameScene extends Phaser.Scene {
     if (earned) this.spawnPowerUp();
   }
 
-  /** A completed set of chips materialises as a power-up beside the player. */
-  private spawnPowerUp(): void {
+  /**
+   * Drop a power-up. With no position it materialises beside the player, which
+   * is what a completed set of chips does.
+   */
+  private spawnPowerUp(atX?: number, atY?: number): void {
     const upgrade = this.progress.rollUpgrade();
     if (!upgrade) {
-      // Everything is maxed; bank the set as score instead of dropping a dud.
+      // Everything is maxed; bank it as score instead of dropping a dud.
       this.score += 250;
       this.cfg.onBanner('FULLY OPTIMISED', '+250');
       return;
     }
 
     const angle = Math.random() * Math.PI * 2;
+    const fromKill = atX !== undefined && atY !== undefined;
+    const originX = fromKill ? atX : this.me.x + Math.cos(angle) * PROGRESSION.spawnRadius;
+    const originY = fromKill ? atY : this.me.y + Math.sin(angle) * PROGRESSION.spawnRadius;
+
     const powerUp = this.takePowerUp();
     powerUp.upgrade = upgrade;
-    powerUp.x = clamp(this.me.x + Math.cos(angle) * PROGRESSION.spawnRadius, 40, WORLD.width - 40);
-    powerUp.y = clamp(this.me.y + Math.sin(angle) * PROGRESSION.spawnRadius, 40, WORLD.height - 40);
+    powerUp.x = clamp(originX, 40, WORLD.width - 40);
+    powerUp.y = clamp(originY, 40, WORLD.height - 40);
     powerUp.ttl = PROGRESSION.powerUpTtlSec;
     powerUp.active = true;
     powerUp.sprite
@@ -1208,7 +1271,7 @@ export class GameScene extends Phaser.Scene {
 
     this.tweens.add({ targets: powerUp.sprite, scale: 1, duration: 320, ease: 'Back.easeOut' });
     this.fx.ring(powerUp.x, powerUp.y, 90, UPGRADES[upgrade].colour, 420);
-    this.cfg.onBanner('POWER-UP READY', UPGRADES[upgrade].name);
+    this.cfg.onBanner(fromKill ? 'RARE DROP' : 'POWER-UP READY', UPGRADES[upgrade].name);
   }
 
   private updatePowerUps(dt: number): void {
@@ -1267,8 +1330,8 @@ export class GameScene extends Phaser.Scene {
     for (let n = 0; n < w.pellets; n++) {
       const a = w.pellets > 1 ? start + step * n : shot.angle;
       const bullet = this.takeRemoteBullet();
-      bullet.x = shot.x + Math.cos(shot.angle) * (def.radius + 8);
-      bullet.y = shot.y + Math.sin(shot.angle) * (def.radius + 8);
+      bullet.x = shot.x + Math.cos(shot.angle) * (def.radius * 0.5);
+      bullet.y = shot.y + Math.sin(shot.angle) * (def.radius * 0.5);
       bullet.vx = Math.cos(a) * w.speed;
       bullet.vy = Math.sin(a) * w.speed;
       bullet.life = w.lifeSec;
@@ -1321,7 +1384,7 @@ export class GameScene extends Phaser.Scene {
     if (free) return free;
     const chip: Chip = {
       sprite: this.add.image(0, 0, TEX.chip).setDepth(12),
-      x: 0, y: 0, vx: 0, vy: 0, ttl: 0, active: false,
+      x: 0, y: 0, vx: 0, vy: 0, homing: false, speed: 0, ttl: 0, active: false,
     };
     this.chips.push(chip);
     return chip;
