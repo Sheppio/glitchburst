@@ -11,6 +11,7 @@ import type { ClassId } from './types.js';
 import { GamepadNavigator } from './ui/GamepadNavigator.js';
 import { UI } from './ui/UI.js';
 import { sanitizeName } from './net/codec.js';
+import { VERSION } from './version.js';
 import { makePlayerId, makeRoomCode } from './util.js';
 
 /**
@@ -251,5 +252,6 @@ Object.assign(window as unknown as Record<string, unknown>, {
     settings,
     world: WORLD,
     playerId,
+    version: VERSION,
   },
 });

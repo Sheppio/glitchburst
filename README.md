@@ -36,7 +36,7 @@ Developing needs the compiler:
 ```bash
 npm install
 npm run watch      # tsc --watch, rebuilding dist/ on save
-npm test           # 148 tests: simulation, codec, single client, mobile, two clients
+npm test           # 149 tests: simulation, codec, single client, mobile, two clients
 ```
 
 `dist/` is committed on purpose — it is what GitHub Pages serves.
@@ -389,7 +389,7 @@ for a game — just don't build anything that needs privacy on top of it.
 npm test
 ```
 
-148 checks across four suites. The browser suites vendor Phaser locally and
+149 checks across four suites. The browser suites vendor Phaser locally and
 swap MQTT for a loopback stub that relays over `BroadcastChannel`, so two tabs
 share one "broker" and a real multi-client room can be tested offline.
 
@@ -398,7 +398,7 @@ share one "broker" and a real multi-client room can be tested offline.
   attribution, steering, decoy priority, host adoption, shockwave, progression
   and upgrade caps, deterministic drop rolls, turn-rate limiting, and the
   auto-aim scoring formula.
-- **`smoke.test.mjs`** (25) — menus, persistence, Phaser boot, election, 20 Hz
+- **`smoke.test.mjs`** (26) — menus, persistence, Phaser boot, election, 20 Hz
   batching, attacker-authority kills, point-blank hits, chip pickup and
   conversion, turn rate, abilities, pause, and broadcast rate under a starved
   renderer.

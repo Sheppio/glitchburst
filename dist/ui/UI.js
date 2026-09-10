@@ -1,5 +1,6 @@
 import { BROKERS } from '../config.js';
 import { CLASSES, CLASS_ORDER, classDps, isClassId, weaponRange } from '../sim/classes.js';
+import { VERSION } from '../version.js';
 /** Where the player's callsign and last class are remembered between visits. */
 const CALLSIGN_KEY = 'glitchburst.callsign';
 const CLASS_KEY = 'glitchburst.class';
@@ -72,6 +73,7 @@ export class UI {
         for (const el of root.querySelectorAll('[data-screen]')) {
             this.screens.set(el.dataset['screen'], el);
         }
+        this.text('version-label', `v${VERSION}`);
         this.restoreCallsign();
         this.buildBrokerList();
         this.buildClassGrid();

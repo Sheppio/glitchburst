@@ -25,6 +25,15 @@ await step('menu screen renders', async () => {
   return { ok: visible && title.includes('GLITCH'), note: title?.trim() };
 });
 
+await step('the menu shows the build version', async () => {
+  const shown = (await page.textContent('#version-label'))?.trim() ?? '';
+  const runtime = await page.evaluate(() => window.glitchburst.version);
+  return {
+    ok: /^v\d+\.\d+\.\d+$/.test(shown) && shown === `v${runtime}`,
+    note: shown,
+  };
+});
+
 await step('class cards built from CLASSES table', async () => {
   const names = await page.$$eval('.class-card .class-name', (n) => n.map((e) => e.textContent));
   return { ok: names.length === 4, note: names.join(', ') };

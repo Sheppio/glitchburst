@@ -4,6 +4,7 @@ import { CLASSES, CLASS_ORDER, classDps, isClassId, weaponRange } from '../sim/c
 import type { ClassId } from '../types.js';
 import type { SettingsStore, InputSettings } from '../input/settings.js';
 import type { NetStatus } from '../net/MqttNet.js';
+import { VERSION } from '../version.js';
 
 export type ScreenId = 'menu' | 'join' | 'class' | 'settings' | 'connecting' | 'hud';
 
@@ -95,6 +96,7 @@ export class UI {
       this.screens.set(el.dataset['screen'] as ScreenId, el);
     }
 
+    this.text('version-label', `v${VERSION}`);
     this.restoreCallsign();
     this.buildBrokerList();
     this.buildClassGrid();

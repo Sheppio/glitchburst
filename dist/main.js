@@ -9,6 +9,7 @@ import { GameScene } from './render/GameScene.js';
 import { GamepadNavigator } from './ui/GamepadNavigator.js';
 import { UI } from './ui/UI.js';
 import { sanitizeName } from './net/codec.js';
+import { VERSION } from './version.js';
 import { makePlayerId, makeRoomCode } from './util.js';
 /**
  * Application shell.
@@ -226,6 +227,7 @@ Object.assign(window, {
         settings,
         world: WORLD,
         playerId,
+        version: VERSION,
     },
 });
 //# sourceMappingURL=main.js.map

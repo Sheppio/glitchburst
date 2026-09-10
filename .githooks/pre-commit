@@ -1,0 +1,12 @@
+#!/bin/sh
+# Bump the patch version, rebuild, and stage the result.
+#
+# The rebuild is not optional: src/version.ts feeds dist/, dist/ is committed
+# because Pages serves it directly, and CI fails the build if the two disagree.
+# Bumping without rebuilding would break every commit.
+set -e
+
+version=$(node scripts/bump-version.mjs)
+npm run build --silent
+git add package.json src/version.ts dist
+echo "glitchburst: v$version"

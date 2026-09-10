@@ -1,5 +1,5 @@
 /**
- * Guard against the README's test count drifting from reality.
+ * Cheap consistency guards for things that drift silently.
  *
  * It already had — the README claimed 85 while the suites ran 141, because
  * tests get added constantly and prose does not. A stale number is worse than
@@ -45,3 +45,20 @@ if (wrong.length) {
 }
 
 console.log(`README agrees: ${total}`);
+
+// The displayed version is generated into src/version.ts from package.json by
+// the pre-commit hook. If someone commits with hooks disabled the two diverge,
+// and the menu then quietly advertises the wrong build — the exact situation
+// where a version number is worse than none, because a bug report cites it.
+const pkg = JSON.parse(await readFile(join(HERE, '..', 'package.json'), 'utf8'));
+const source = await readFile(join(HERE, '..', 'src', 'version.ts'), 'utf8');
+const baked = source.match(/VERSION = '([^']+)'/)?.[1];
+
+if (baked !== pkg.version) {
+  console.error(
+    `::error::src/version.ts says ${baked} but package.json says ${pkg.version}. Run 'npm run version:bump -- --check'.`,
+  );
+  process.exit(1);
+}
+
+console.log(`version ${pkg.version} baked in`);

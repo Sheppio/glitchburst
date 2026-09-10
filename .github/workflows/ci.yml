@@ -44,8 +44,8 @@ jobs:
 
       # Prose drifts from tests silently. This is the same idea as the stale
       # dist/ check above, applied to the README's coverage claim.
-      - name: Verify the README's test count
-        run: node test/count.mjs
+      - name: Verify README and version consistency
+        run: node test/consistency.mjs
 
   test-sim:
     name: Simulation and codec

@@ -427,6 +427,16 @@ body.console-platform .console-banner { display: flex; }
 .pill-idle { color: var(--ink-faint); }
 .pill-quiet { background: transparent; }
 
+/* Build version. Deliberately quiet — useful when someone reports a bug, not
+   something the player needs to read. */
+.version {
+  margin-left: auto;
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
 /* ---------------------------------------------------------------- loader */
 
 .loader { display: flex; gap: 7px; justify-content: center; margin: 24px 0; }
