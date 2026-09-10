@@ -342,7 +342,8 @@ body.console-platform .console-banner { display: flex; }
 .class-name { font-family: var(--display); font-size: 19px; font-weight: 700; margin: 4px 0 8px; }
 .class-blurb { font-size: 11.5px; line-height: 1.55; color: var(--ink-soft); margin: 0 0 10px; }
 
-.class-stats { display: flex; gap: 12px; font-size: 10.5px; color: var(--ink-faint); }
+.class-stats { display: flex; gap: 10px; font-size: 10.5px; color: var(--ink-faint); flex-wrap: wrap; }
+.class-weapon { margin-top: 6px; color: var(--accent, var(--cyan)); opacity: 0.85; }
 .class-stats b { color: var(--ink); font-weight: 700; }
 
 .room-chip {

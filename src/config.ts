@@ -51,8 +51,32 @@ export const HORDE = {
   maxEnemies: 100,
   /** A room holds a squad of one to four. The fifth arrival is turned away. */
   maxPlayers: 4,
-  /** Seconds between waves. */
-  waveIntervalSec: 14,
+  /**
+   * Wave pacing.
+   *
+   * A fixed interval cannot work here. Wave size grows linearly and enemy
+   * health grows with it, so the damage a wave represents grows roughly
+   * quadratically — against a constant timer that means the dps required to
+   * keep up outruns any possible player by about wave five, and the field
+   * saturates at the enemy cap shortly after. No amount of skill closes a
+   * quadratic gap.
+   *
+   * So the timer scales with the size of the wave it is pacing, and clearing
+   * the field early pulls the next wave forward. The result is a game that
+   * responds to how well you are actually doing: play well and waves come
+   * faster (and so do chips), struggle and you get the full window to recover.
+   */
+  waveBaseIntervalSec: 10,
+  /** Extra seconds granted per enemy in the wave. */
+  wavePerEnemySec: 0.55,
+  /** Floor, so a strong player cannot be buried by back-to-back waves. */
+  waveMinIntervalSec: 5,
+  /**
+   * Clear the field below this fraction of the wave that spawned it and the
+   * next one arrives early. Not zero: hunting the last stragglers across the
+   * arena is dead time, not difficulty.
+   */
+  waveClearFraction: 0.22,
   /** Grace period before the first wave of a fresh room. */
   firstWaveDelaySec: 4,
   baseWaveSize: 8,

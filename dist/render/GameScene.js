@@ -3,7 +3,7 @@ import { HORDE, NET, RENDER, TURN_RATE_RAD_PER_SEC, WORLD } from '../config.js';
 import { HAPTIC } from '../input/settings.js';
 import { decodeEvents, decodeField, decodeHorde, decodePause, decodeShots, decodePlayer, encodeDamage, encodeEvents, encodeField, encodeHorde, encodePause, encodePlayer, encodeShots, } from '../net/codec.js';
 import { Topics, segment } from '../net/topics.js';
-import { CLASSES } from '../sim/classes.js';
+import { CLASSES, classDps } from '../sim/classes.js';
 import { ENEMY_DEFS } from '../sim/enemyTypes.js';
 import { HordeEngine } from '../sim/HordeEngine.js';
 import { PROGRESSION, PlayerProgress, UPGRADES, UPGRADE_ORDER } from '../sim/progression.js';
@@ -1202,12 +1202,9 @@ export class GameScene extends Phaser.Scene {
      */
     nearestEnemy(from, range) {
         const w = this.def.weapon;
-        // Not every pellet of a spread weapon connects, so a shotgun's paper dps
-        // would badly overstate how fast it finishes a target. This is a heuristic,
-        // and it only has to be consistent across candidates to rank them.
-        const connecting = w.pellets > 1 ? w.pellets * 0.6 : 1;
-        const dps = (w.damage * connecting * this.progress.damageMultiplier) /
-            (w.fireIntervalSec * this.progress.fireIntervalMultiplier);
+        // Same definition the class cards quote, scaled by this run's upgrades, so
+        // the number shown to the player is the number the game reasons with.
+        const dps = (classDps(this.def) * this.progress.damageMultiplier) / this.progress.fireIntervalMultiplier;
         const candidates = [];
         for (const view of this.enemies.values()) {
             candidates.push({ id: view.id, x: view.sprite.x, y: view.sprite.y, hp: view.hp });

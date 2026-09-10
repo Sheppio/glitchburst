@@ -13,6 +13,7 @@ import { PlayerProgress, PROGRESSION, UPGRADES } from '../dist/sim/progression.j
 import { approachAngle, hashUnit } from '../dist/util.js';
 import { ENEMY_DEFS } from '../dist/sim/enemyTypes.js';
 import { pickTarget, targetScore, TARGETING } from '../dist/sim/targeting.js';
+import { CLASSES, CLASS_ORDER, classDps, weaponRange } from '../dist/sim/classes.js';
 
 const { check, finish } = reporter('GLITCHBURST — simulation & codec');
 
@@ -254,6 +255,83 @@ const run = (engine, seconds, t = targets(1)) => {
     ENEMY_DEFS[1].chipDrop > ENEMY_DEFS[0].chipDrop &&
     ENEMY_DEFS[2].powerUpChance > ENEMY_DEFS[1].powerUpChance,
     `chips ${ENEMY_DEFS[0].chipDrop}/${ENEMY_DEFS[1].chipDrop}/${ENEMY_DEFS[2].chipDrop}`);
+}
+
+/* ------------------------------------------------------------- class dps */
+
+{
+  const quoted = CLASS_ORDER.map((id) => `${CLASSES[id].short ?? id}:${Math.round(classDps(CLASSES[id]))}`);
+  check('every class has a distinct DPS', new Set(CLASS_ORDER.map((id) => Math.round(classDps(CLASSES[id])))).size === 4,
+    quoted.join(' '));
+
+  // The Fireman's paper dps counts all seven pellets, which only lands at
+  // point-blank. The quoted figure must be the discounted one, or the card
+  // would tell the player it out-damages everything.
+  const fireman = CLASSES.fireman;
+  const paper = (fireman.weapon.damage * fireman.weapon.pellets) / fireman.weapon.fireIntervalSec;
+  check('a spread weapon is quoted below its paper dps', classDps(fireman) < paper,
+    `${Math.round(classDps(fireman))} quoted vs ${Math.round(paper)} on paper`);
+
+  check('the DPS class leader is the dedicated DPS class',
+    classDps(CLASSES.overclocker) === Math.max(...CLASS_ORDER.map((id) => classDps(CLASSES[id]))),
+    `Overclocker ${Math.round(classDps(CLASSES.overclocker))}`);
+
+  check('the shotgun is quoted as the shortest ranged',
+    weaponRange(fireman) === Math.min(...CLASS_ORDER.map((id) => weaponRange(CLASSES[id]))),
+    `${Math.round(weaponRange(fireman))}px vs Overclocker ${Math.round(weaponRange(CLASSES.overclocker))}px`);
+
+  check('every quoted stat is a finite positive number',
+    CLASS_ORDER.every((id) => classDps(CLASSES[id]) > 0 && weaponRange(CLASSES[id]) > 0));
+}
+
+/* ---------------------------------------------------------- wave pacing */
+
+{
+  // Bigger waves must be given more time, or the dps needed to keep up grows
+  // quadratically against a fixed timer and outruns any possible player.
+  const engine = new HordeEngine();
+  const t = targets(1);
+  const dt = 1 / 60;
+  const stamps = [];
+  let clock = 0;
+  for (let i = 0; i < 60 * 150; i++) {
+    const result = engine.step(dt, t);
+    clock += dt;
+    for (const ev of result.events) if (ev.t === 'wave') stamps.push(clock);
+  }
+  const gaps = stamps.slice(1).map((v, i) => v - stamps[i]);
+  check('each wave is given longer than the last', gaps[1] > gaps[0] && gaps[2] > gaps[1],
+    gaps.slice(0, 3).map((g) => `${g.toFixed(1)}s`).join(' -> '));
+  check('the first window is well over the old fixed 14s', gaps[0] > 14,
+    `${gaps[0].toFixed(1)}s for a wave of ${HORDE.baseWaveSize + HORDE.waveGrowth}`);
+}
+
+{
+  // Clearing the field pulls the next wave forward, so skill buys tempo.
+  const engine = new HordeEngine();
+  run(engine, 5, targets(1));
+  const waveAfterFirst = engine.waveNumber;
+  const size = engine.enemyCount;
+  engine.enemies.clear();
+
+  run(engine, 1, targets(1));
+  check('a cleared field does not skip the minimum gap', engine.waveNumber === waveAfterFirst,
+    `still wave ${engine.waveNumber} after 1s`);
+
+  run(engine, 5, targets(1));
+  check('clearing the field pulls the next wave forward', engine.waveNumber > waveAfterFirst,
+    `wave ${engine.waveNumber} arrived early, ~6s into a ${(HORDE.waveBaseIntervalSec + size * HORDE.wavePerEnemySec).toFixed(0)}s window`);
+}
+
+{
+  // A wave trimmed by the enemy cap must not be granted time for enemies that
+  // were never spawned.
+  const engine = new HordeEngine();
+  run(engine, 400, targets(4));
+  check('the cap holds under sustained pressure', engine.enemyCount <= HORDE.maxEnemies,
+    `${engine.enemyCount} live at wave ${engine.waveNumber}`);
+  check('waves keep coming even while the field is full', engine.waveNumber > 8,
+    `reached wave ${engine.waveNumber}`);
 }
 
 /* -------------------------------------------------------------- auto-aim */

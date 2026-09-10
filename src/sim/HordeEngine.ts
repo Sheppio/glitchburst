@@ -36,6 +36,10 @@ export class HordeEngine {
   private nextId = 1;
   private nextProjectileId = 1;
   private waveTimer: number = HORDE.firstWaveDelaySec;
+  /** Enemies spawned by the current wave, for the early-clear check. */
+  private lastWaveSize = 0;
+  /** Seconds since the current wave landed. */
+  private sinceWave = 0;
   private wave = 0;
   private pending = new Map<EnemyId, PendingDamage>();
   private grid = new Map<number, Enemy[]>();
@@ -83,6 +87,8 @@ export class HordeEngine {
     this.pending.clear();
     this.wave = 0;
     this.waveTimer = HORDE.firstWaveDelaySec;
+    this.lastWaveSize = 0;
+    this.sinceWave = 0;
     this.nextId = 1;
   }
 
@@ -120,7 +126,11 @@ export class HordeEngine {
     // new host a half interval of breathing room. Adopting *nothing* means this
     // is a fresh room, and it should open on the normal first-wave grace period
     // rather than idling for seven seconds.
-    this.waveTimer = this.enemies.size > 0 ? HORDE.waveIntervalSec * 0.5 : HORDE.firstWaveDelaySec;
+    this.waveTimer = this.enemies.size > 0
+      ? this.intervalFor(this.enemies.size) * 0.5
+      : HORDE.firstWaveDelaySec;
+    this.lastWaveSize = this.enemies.size;
+    this.sinceWave = 0;
   }
 
   /**
@@ -236,18 +246,42 @@ export class HordeEngine {
     this.pending.clear();
   }
 
+  /** Seconds a wave of `size` enemies is given before the next one lands. */
+  private intervalFor(size: number): number {
+    return Math.max(
+      HORDE.waveMinIntervalSec,
+      HORDE.waveBaseIntervalSec + size * HORDE.wavePerEnemySec,
+    );
+  }
+
   private advanceWaves(dt: number, targets: readonly AiTarget[], result: StepResult): void {
     this.waveTimer -= dt;
-    if (this.waveTimer > 0) return;
+    this.sinceWave += dt;
+
+    // Clearing the field pulls the next wave forward, subject to a floor — so
+    // skill is rewarded with tempo rather than with waiting around.
+    const cleared =
+      this.lastWaveSize > 0 &&
+      this.enemies.size <= Math.max(2, Math.round(this.lastWaveSize * HORDE.waveClearFraction)) &&
+      this.sinceWave >= HORDE.waveMinIntervalSec;
+
+    if (this.waveTimer > 0 && !cleared) return;
 
     this.wave += 1;
-    this.waveTimer = HORDE.waveIntervalSec;
+    this.sinceWave = 0;
 
     const want = this.waveSize;
     const room = HORDE.maxEnemies - this.enemies.size;
     const size = Math.max(0, Math.min(want, room));
 
     for (let n = 0; n < size; n++) this.spawn(this.rollKind(), targets);
+
+    // The timer is set from the wave actually spawned, not the one requested:
+    // near the enemy cap a wave can be trimmed, and it should not then be
+    // granted time for enemies that were never created.
+    this.lastWaveSize = size;
+    this.waveTimer = this.intervalFor(size);
+
     result.events.push({ t: 'wave', n: this.wave, size });
   }
 

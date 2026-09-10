@@ -1,6 +1,6 @@
 import { BROKERS } from '../config.js';
 import type { HudSnapshot } from '../render/GameScene.js';
-import { CLASSES, CLASS_ORDER, isClassId } from '../sim/classes.js';
+import { CLASSES, CLASS_ORDER, classDps, isClassId, weaponRange } from '../sim/classes.js';
 import type { ClassId } from '../types.js';
 import type { SettingsStore, InputSettings } from '../input/settings.js';
 import type { NetStatus } from '../net/MqttNet.js';
@@ -328,10 +328,12 @@ export class UI {
           <div class="class-name">${def.name}</div>
           <p class="class-blurb">${def.blurb}</p>
           <div class="class-stats">
+            <span>DPS <b>${Math.round(classDps(def))}</b></span>
             <span>HP <b>${def.maxHp}</b></span>
+            <span>RNG <b>${Math.round(weaponRange(def))}</b></span>
             <span>SPD <b>${Math.round(def.speed / 10)}</b></span>
           </div>
-          <div class="class-stats" style="margin-top:6px">
+          <div class="class-stats class-weapon">
             <span>${def.weapon.name}</span>
           </div>
         `;

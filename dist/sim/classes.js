@@ -136,6 +136,29 @@ export const CLASSES = {
         },
     },
 };
+/**
+ * Fraction of a spread weapon's pellets assumed to connect with a single
+ * target. A shotgun's paper dps counts all seven, which only happens at
+ * point-blank range against something large — quoting it would tell the player
+ * the Fireman out-damages every other class, which is not true in play.
+ */
+export const PELLET_CONNECT_SHARE = 0.6;
+/**
+ * Sustained single-target damage per second.
+ *
+ * One definition, used both to rank auto-aim targets and to label the class
+ * cards, so the number a player is shown is the same number the game reasons
+ * with.
+ */
+export function classDps(def) {
+    const w = def.weapon;
+    const connecting = w.pellets > 1 ? w.pellets * PELLET_CONNECT_SHARE : 1;
+    return (w.damage * connecting) / w.fireIntervalSec;
+}
+/** How far a round travels before expiring. */
+export function weaponRange(def) {
+    return def.weapon.speed * def.weapon.lifeSec;
+}
 export const CLASS_ORDER = ['overclocker', 'fireman', 'glitcher', 'encoder'];
 export function isClassId(value) {
     return value in CLASSES;

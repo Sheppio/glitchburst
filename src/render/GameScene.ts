@@ -22,7 +22,7 @@ import type { ShotRecord } from '../net/codec.js';
 import type { MqttNet } from '../net/MqttNet.js';
 import type { RoomSession } from '../net/RoomSession.js';
 import { Topics, segment } from '../net/topics.js';
-import { CLASSES } from '../sim/classes.js';
+import { CLASSES, classDps } from '../sim/classes.js';
 import type { ClassDef } from '../sim/classes.js';
 import { ENEMY_DEFS } from '../sim/enemyTypes.js';
 import { HordeEngine } from '../sim/HordeEngine.js';
@@ -1481,13 +1481,10 @@ export class GameScene extends Phaser.Scene {
   private nearestEnemy(from: Vec2, range: number): Vec2 | null {
     const w = this.def.weapon;
 
-    // Not every pellet of a spread weapon connects, so a shotgun's paper dps
-    // would badly overstate how fast it finishes a target. This is a heuristic,
-    // and it only has to be consistent across candidates to rank them.
-    const connecting = w.pellets > 1 ? w.pellets * 0.6 : 1;
+    // Same definition the class cards quote, scaled by this run's upgrades, so
+    // the number shown to the player is the number the game reasons with.
     const dps =
-      (w.damage * connecting * this.progress.damageMultiplier) /
-      (w.fireIntervalSec * this.progress.fireIntervalMultiplier);
+      (classDps(this.def) * this.progress.damageMultiplier) / this.progress.fireIntervalMultiplier;
 
     const candidates: Array<{ id: string; x: number; y: number; hp: number }> = [];
     for (const view of this.enemies.values()) {
