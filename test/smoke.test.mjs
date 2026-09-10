@@ -41,9 +41,15 @@ await step('class cards built from CLASSES table', async () => {
 
 await step('settings toggles render', async () => {
   await page.click('#btn-settings');
-  const count = await page.$$eval('.toggle', (n) => n.length);
+  // Assert the ones that matter by name rather than pinning a count, which
+  // breaks every time a setting is added and tells you nothing when it does.
+  const keys = await page.$$eval('.toggle', (n) => n.map((e) => e.dataset.key));
   await page.click('#btn-settings-back');
-  return { ok: count === 5, note: `${count} toggles` };
+  const required = ['autoFire', 'autoAim', 'sfx', 'music'];
+  return {
+    ok: required.every((k) => keys.includes(k)),
+    note: `${keys.length} toggles: ${keys.join(', ')}`,
+  };
 });
 
 await step('the callsign and class are remembered across a reload', async () => {
@@ -416,6 +422,40 @@ await step('resuming restarts the simulation', async () => {
   await page.waitForTimeout(700);
   const after = await positions();
   return { ok: before !== after && !(await page.isVisible('#pause-veil')), note: 'horde moving again' };
+});
+
+await step('audio starts after a gesture and mutes on demand', async () => {
+  const out = await page.evaluate(async () => {
+    const { audio, music, sfx } = window.glitchburst;
+    audio.unlock();
+    await new Promise((r) => setTimeout(r, 150));
+
+    // Every effect must survive being called; audio is a garnish and must never
+    // be able to take a frame down.
+    let threw = null;
+    try {
+      sfx.shoot('overclocker'); sfx.hit(); sfx.kill(true); sfx.hurt();
+      sfx.ability(); sfx.chip(0.5); sfx.powerUp(); sfx.wave(); sfx.click();
+    } catch (e) { threw = String(e); }
+
+    const gainOf = (ch) => audio.destination(ch)?.gain.value ?? null;
+    const before = { sfx: gainOf('sfx'), music: gainOf('music') };
+    audio.setEnabled('sfx', false);
+    audio.setEnabled('music', false);
+    await new Promise((r) => setTimeout(r, 120));
+    const muted = { sfx: audio.destination('sfx'), music: audio.destination('music') };
+    audio.setEnabled('sfx', true);
+    audio.setEnabled('music', true);
+
+    return { state: audio.context?.state ?? 'none', threw, before, mutedSfx: muted.sfx, playing: music.isPlaying };
+  });
+
+  return {
+    ok: out.threw === null && out.mutedSfx === null,
+    note: out.threw
+      ? `effect threw: ${out.threw}`
+      : `context ${out.state}, muting detaches the channel, music playing: ${out.playing}`,
+  };
 });
 
 await step('no uncaught errors', async () => ({ ok: errors.length === 0, note: errors.slice(0, 4).join(' | ') || 'clean' }));

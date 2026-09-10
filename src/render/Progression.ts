@@ -4,6 +4,7 @@ import { PROGRESSION, PlayerProgress, UPGRADES } from '../sim/progression.js';
 import type { UpgradeId } from '../sim/progression.js';
 import type { EnemyDef } from '../sim/enemyTypes.js';
 import { clamp, dist2, hashUnit } from '../util.js';
+import type { Sfx } from '../audio/Sfx.js';
 import type { Fx } from './fx.js';
 import { Pool } from './pool.js';
 import { TEX } from './textures.js';
@@ -60,6 +61,7 @@ export interface Collector {
 export interface ProgressionHost {
   readonly scene: Phaser.Scene;
   readonly fx: Fx;
+  readonly sfx: Sfx;
   collector(): Collector;
   award(score: number): void;
   banner(text: string, sub?: string): void;
@@ -240,6 +242,8 @@ export class ProgressionSystem {
     this.host.award(1);
     const earned = this.progress.addChip();
     this.host.fx.chipSpark(who.x, who.y);
+    // Pitch climbs as the set fills, so the run-up to a power-up is audible.
+    this.host.sfx.chip(this.progress.chips / PROGRESSION.chipsPerPowerUp);
 
     if (earned) this.spawnPowerUp();
   }
@@ -290,6 +294,7 @@ export class ProgressionSystem {
 
     this.host.scene.tweens.add({ targets: powerUp.sprite, scale: 1, duration: 320, ease: 'Back.easeOut' });
     this.host.scene.tweens.add({ targets: powerUp.orbit, scale: 1, duration: 420, ease: 'Back.easeOut' });
+    this.host.sfx.drop();
     this.host.fx.ring(powerUp.x, powerUp.y, 90, UPGRADES[upgrade].colour, 420);
     this.host.banner(fromKill ? 'RARE DROP' : 'POWER-UP READY', UPGRADES[upgrade].name);
   }
@@ -343,6 +348,7 @@ export class ProgressionSystem {
     const def = UPGRADES[id];
     if (!this.progress.grant(id)) return;
 
+    this.host.sfx.powerUp();
     this.host.fx.ring(who.x, who.y, 150, def.colour, 480);
     this.host.fx.upgradeText(who.x, who.y - 40, def.blurb, def.colour);
     this.host.banner(def.name.toUpperCase(), `${def.blurb} · ${this.progress.stacks[id]} stacks`);

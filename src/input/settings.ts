@@ -17,6 +17,10 @@ export interface InputSettings {
   /** Left-handed layout: swaps the movement and aim zones on touch. */
   southpaw: boolean;
   vibration: boolean;
+  /** Weapon, impact and pickup effects. */
+  sfx: boolean;
+  /** Background music. */
+  music: boolean;
 }
 
 const STORAGE_KEY = 'glitchburst.input.v1';
@@ -29,6 +33,8 @@ export const DEFAULT_SETTINGS: InputSettings = {
   forceTouchControls: false,
   southpaw: false,
   vibration: true,
+  sfx: true,
+  music: true,
 };
 
 export interface SettingsEvents extends Record<string, unknown> {
@@ -62,7 +68,7 @@ export class SettingsStore {
     this.events.emit('change', { settings: this.state });
   }
 
-  toggle(key: 'autoFire' | 'autoAim' | 'forceTouchControls' | 'southpaw' | 'vibration'): void {
+  toggle(key: 'autoFire' | 'autoAim' | 'forceTouchControls' | 'southpaw' | 'vibration' | 'sfx' | 'music'): void {
     this.set(key, !this.state[key]);
   }
 }

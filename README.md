@@ -36,7 +36,7 @@ Developing needs the compiler:
 ```bash
 npm install
 npm run watch      # tsc --watch, rebuilding dist/ on save
-npm test           # 149 tests: simulation, codec, single client, mobile, two clients
+npm test           # 150 tests: simulation, codec, single client, mobile, two clients
 ```
 
 `dist/` is committed on purpose — it is what GitHub Pages serves.
@@ -389,7 +389,7 @@ for a game — just don't build anything that needs privacy on top of it.
 npm test
 ```
 
-149 checks across four suites. The browser suites vendor Phaser locally and
+150 checks across four suites. The browser suites vendor Phaser locally and
 swap MQTT for a loopback stub that relays over `BroadcastChannel`, so two tabs
 share one "broker" and a real multi-client room can be tested offline.
 
@@ -398,7 +398,7 @@ share one "broker" and a real multi-client room can be tested offline.
   attribution, steering, decoy priority, host adoption, shockwave, progression
   and upgrade caps, deterministic drop rolls, turn-rate limiting, and the
   auto-aim scoring formula.
-- **`smoke.test.mjs`** (26) — menus, persistence, Phaser boot, election, 20 Hz
+- **`smoke.test.mjs`** (27) — menus, persistence, Phaser boot, election, 20 Hz
   batching, attacker-authority kills, point-blank hits, chip pickup and
   conversion, turn rate, abilities, pause, and broadcast rate under a starved
   renderer.
@@ -449,6 +449,32 @@ interval. Timing assertions poll for outcomes rather than sleeping.
 - Public brokers give no delivery guarantees. Snapshots are full state, so a
   dropped one self-heals on the next tick; a dropped *damage report*, however,
   is simply lost.
+
+## Sound
+
+Everything is **synthesised in the browser** — there is no audio file in the
+repository and nothing to download. Same reasoning as the textures: the game
+stays a handful of static files with no assets to fetch, no CORS surface and
+nothing to license. It also suits the setting; a mainframe should bleep rather
+than play recorded gunfire.
+
+Effects are a few oscillators and an envelope, built and discarded per shot.
+Each weapon is pitched differently so four players in a room sound distinct, and
+the chip pickup climbs in pitch as a set fills, so the run-up to a power-up is
+audible. Anything that can fire many times a frame is rate-limited — auto-fire
+plus a hundred dying enemies would otherwise stack hundreds of oscillators a
+second and sum into noise rather than reading as events.
+
+The music is an Am–F–C–G arpeggio scheduled with the standard Web Audio
+lookahead: a timer wakes every 25 ms and places notes on the *audio* clock up to
+150 ms ahead. `setInterval` alone drifts by tens of milliseconds under load,
+which is instantly audible as wobbling rhythm, but it is fine for deciding what
+to schedule next.
+
+Browsers refuse to start audio without a user gesture, so the context is created
+on the first click, tap or keypress and everything no-ops until then. Music
+starts when a match does, not on the menu — opening a shared link should not
+ambush someone at work. Both channels have toggles in settings.
 
 ## A note on performance
 

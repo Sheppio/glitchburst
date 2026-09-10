@@ -1,5 +1,8 @@
 import * as Phaser from 'phaser';
 import { BROKERS, WORLD } from './config.js';
+import { AudioBus } from './audio/AudioBus.js';
+import { Music } from './audio/Music.js';
+import { Sfx } from './audio/Sfx.js';
 import { InputManager } from './input/InputManager.js';
 import { SettingsStore } from './input/settings.js';
 import { MqttNet } from './net/MqttNet.js';
@@ -30,6 +33,28 @@ const gameRoot = document.getElementById('game-root');
 if (!uiRoot || !gameRoot)
     throw new Error('index.html is missing #ui-root or #game-root');
 const settings = new SettingsStore();
+/**
+ * Audio.
+ *
+ * The context cannot be created until the player interacts — browsers refuse to
+ * start audio without a gesture — so the bus stays dormant and the first click,
+ * tap or keypress brings it up. Everything downstream no-ops until then.
+ */
+const audio = new AudioBus();
+const sfx = new Sfx(audio);
+const music = new Music(audio);
+const unlockAudio = () => {
+    audio.unlock();
+    audio.setEnabled('sfx', settings.current.sfx);
+    audio.setEnabled('music', settings.current.music);
+};
+for (const event of ['pointerdown', 'keydown', 'touchstart']) {
+    window.addEventListener(event, unlockAudio, { passive: true });
+}
+settings.events.on('change', ({ settings: s }) => {
+    audio.setEnabled('sfx', s.sfx);
+    audio.setEnabled('music', s.music);
+});
 const net = new MqttNet();
 const input = new InputManager(document.body, settings);
 const playerId = makePlayerId();
@@ -73,7 +98,7 @@ const ui = new UI(uiRoot, settings, {
         ui.show('menu');
         navigator_.start();
     },
-});
+}, sfx);
 /** Menu navigation from a controller. Stopped in-game so A fires the ability. */
 const navigator_ = new GamepadNavigator(input.gamepad, uiRoot);
 navigator_.onConnection = (connected) => {
@@ -122,6 +147,7 @@ async function deploy(cls) {
         settings,
         classId: cls,
         playerName: name,
+        sfx,
         onHud: (snapshot) => ui.updateHud(snapshot),
         onBanner: (text, sub) => ui.banner(text, sub),
     };
@@ -164,11 +190,17 @@ async function deploy(cls) {
     document.body.classList.remove('nav-focus');
     // The on-screen sticks belong to the match, not the menu.
     input.setInGame(true);
+    // Music belongs to the match. Starting it on the menu ambushes anyone who
+    // opened a shared link somewhere they would rather not be making noise.
+    unlockAudio();
+    if (settings.current.music)
+        music.start();
     ui.show('hud');
     ui.setRoomCode(pendingRoomCode);
     connecting = false;
 }
 function teardown() {
+    music.stop();
     input.setInGame(false);
     room?.leave();
     room = null;
@@ -228,6 +260,9 @@ Object.assign(window, {
         world: WORLD,
         playerId,
         version: VERSION,
+        audio,
+        music,
+        sfx,
     },
 });
 //# sourceMappingURL=main.js.map

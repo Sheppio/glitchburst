@@ -31,6 +31,7 @@ import { pickTarget } from '../sim/targeting.js';
 import { EnemyKind, FLAG_ABILITY, FLAG_DOWN, FLAG_FIRING } from '../types.js';
 import type { AiTarget, ClassId, EnemyId, FieldEffect, PlayerId, PlayerState, Vec2 } from '../types.js';
 import { approachAngle, clamp, counterId, dist2, lerpAngle, segmentDist2 } from '../util.js';
+import type { Sfx } from '../audio/Sfx.js';
 import { DAMAGE_RED, Fx } from './fx.js';
 import { glide, smoothing } from './lerp.js';
 import { Pool } from './pool.js';
@@ -65,6 +66,7 @@ export interface HudSnapshot {
 }
 
 export interface GameSceneInit {
+  sfx: Sfx;
   net: MqttNet;
   room: RoomSession;
   input: InputManager;
@@ -285,6 +287,7 @@ export class GameScene extends Phaser.Scene {
     this.progression = new ProgressionSystem({
       scene: this,
       fx: this.fx,
+      sfx: this.cfg.sfx,
       collector: () => ({
         x: this.me.x,
         y: this.me.y,
@@ -466,6 +469,7 @@ export class GameScene extends Phaser.Scene {
       this.outboundShots.push({ x: this.me.x, y: this.me.y, angle });
     }
 
+    this.cfg.sfx.shoot(this.def.id);
     this.fx.muzzleFlash(
       this.me.x + Math.cos(angle) * (this.def.radius + 10),
       this.me.y + Math.sin(angle) * (this.def.radius + 10),
@@ -488,6 +492,7 @@ export class GameScene extends Phaser.Scene {
 
     // Requirement: rumble when the local player activates their class ability.
     this.cfg.input.triggerRumble(HAPTIC.ability.weak, HAPTIC.ability.strong, HAPTIC.ability.ms);
+    this.cfg.sfx.ability();
 
     switch (ability.kind) {
       case 'overclock':
@@ -591,6 +596,7 @@ export class GameScene extends Phaser.Scene {
    * a dark violet Trojan Tank.
    */
   private flashEnemy(enemy: EnemyView): void {
+    this.cfg.sfx.hit();
     enemy.sprite.setTintFill(DAMAGE_RED);
     enemy.sprite.setScale(1.22);
     this.tweens.add({ targets: enemy.sprite, scale: 1, duration: 130, ease: 'Cubic.easeOut' });
@@ -674,6 +680,7 @@ export class GameScene extends Phaser.Scene {
     if (this.downedFor > 0) return;
 
     this.me.hp = Math.max(0, this.me.hp - amount);
+    this.cfg.sfx.hurt();
     this.fx.damageNumber(this.me.x, this.me.y - 26, amount);
     this.cameras.main.shake(120, 0.006);
     this.cameras.main.flash(90, 255, 60, 120, false);
@@ -689,6 +696,7 @@ export class GameScene extends Phaser.Scene {
       this.downedFor = 5;
       this.me.flags = FLAG_DOWN;
       this.fx.enemyBurst(this.me.x, this.me.y, this.def.colour, 1.6);
+      this.cfg.sfx.died();
       this.cfg.onBanner('PROCESS TERMINATED', 'Rebooting in 5s');
     }
   }
@@ -759,6 +767,7 @@ export class GameScene extends Phaser.Scene {
         this.spawnEnemyBullet(event.x, event.y, event.vx, event.vy, event.damage);
       } else if (event.t === 'wave') {
         this.lastWave = event.n;
+        this.cfg.sfx.wave();
         this.cfg.onBanner(`WAVE ${event.n}`, `${event.size} hostile processes spawned`);
       }
     }
@@ -977,6 +986,7 @@ export class GameScene extends Phaser.Scene {
         case 'wave':
           if (!this.horde) {
             this.lastWave = event.n;
+            this.cfg.sfx.wave();
             this.cfg.onBanner(`WAVE ${event.n}`, `${event.size} hostile processes spawned`);
           }
           break;
@@ -1128,6 +1138,7 @@ export class GameScene extends Phaser.Scene {
       this.enemies.delete(id);
     }
     this.fx.enemyBurst(x, y, def.colour, kind === EnemyKind.TrojanTank ? 2 : 1);
+    this.cfg.sfx.kill(kind === EnemyKind.TrojanTank);
     this.progression.dropFrom(x, y, def, id);
   }
 

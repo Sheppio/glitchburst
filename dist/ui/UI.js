@@ -26,6 +26,16 @@ const TOGGLES = [
         detail: 'Swap the movement and aim halves of the screen.',
     },
     {
+        key: 'sfx',
+        title: 'Sound effects',
+        detail: 'Weapons, impacts, pickups and abilities.',
+    },
+    {
+        key: 'music',
+        title: 'Music',
+        detail: 'Background track. Synthesised in the browser — there is no audio file to download.',
+    },
+    {
         key: 'vibration',
         title: 'Haptics',
         detail: 'Controller rumble and device vibration on damage and ability use.',
@@ -62,14 +72,16 @@ export class UI {
     root;
     settings;
     callbacks;
+    sfx;
     screens = new Map();
     selectedClass = readStoredClass();
     bannerTimer = 0;
     current = 'menu';
-    constructor(root, settings, callbacks) {
+    constructor(root, settings, callbacks, sfx) {
         this.root = root;
         this.settings = settings;
         this.callbacks = callbacks;
+        this.sfx = sfx;
         for (const el of root.querySelectorAll('[data-screen]')) {
             this.screens.set(el.dataset['screen'], el);
         }
@@ -282,7 +294,10 @@ export class UI {
             <span>${def.weapon.name}</span>
           </div>
         `;
-            card.addEventListener('click', () => this.selectClass(id));
+            card.addEventListener('click', () => {
+                this.sfx.click();
+                this.selectClass(id);
+            });
             return card;
         }));
     }
@@ -312,8 +327,10 @@ export class UI {
             knob.className = 'switch';
             button.append(copy, knob);
             button.addEventListener('click', () => {
-                this.settings.set(def.key, !this.settings.current[def.key]);
+                const next = !this.settings.current[def.key];
+                this.settings.set(def.key, next);
                 this.syncToggles();
+                this.sfx.toggle(Boolean(next));
             });
             return button;
         }));
@@ -401,7 +418,10 @@ export class UI {
             el.textContent = value;
     }
     on(id, handler) {
-        this.el(id).addEventListener('click', handler);
+        this.el(id).addEventListener('click', () => {
+            this.sfx.click();
+            handler();
+        });
     }
 }
 //# sourceMappingURL=UI.js.map

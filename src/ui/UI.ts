@@ -5,6 +5,7 @@ import type { ClassId } from '../types.js';
 import type { SettingsStore, InputSettings } from '../input/settings.js';
 import type { NetStatus } from '../net/MqttNet.js';
 import { VERSION } from '../version.js';
+import type { Sfx } from '../audio/Sfx.js';
 
 export type ScreenId = 'menu' | 'join' | 'class' | 'settings' | 'connecting' | 'hud';
 
@@ -49,6 +50,16 @@ const TOGGLES: ToggleDef[] = [
     detail: 'Swap the movement and aim halves of the screen.',
   },
   {
+    key: 'sfx',
+    title: 'Sound effects',
+    detail: 'Weapons, impacts, pickups and abilities.',
+  },
+  {
+    key: 'music',
+    title: 'Music',
+    detail: 'Background track. Synthesised in the browser — there is no audio file to download.',
+  },
+  {
     key: 'vibration',
     title: 'Haptics',
     detail: 'Controller rumble and device vibration on damage and ability use.',
@@ -91,6 +102,7 @@ export class UI {
     private root: HTMLElement,
     private settings: SettingsStore,
     private callbacks: UICallbacks,
+    private sfx: Sfx,
   ) {
     for (const el of root.querySelectorAll<HTMLElement>('[data-screen]')) {
       this.screens.set(el.dataset['screen'] as ScreenId, el);
@@ -340,7 +352,10 @@ export class UI {
           </div>
         `;
 
-        card.addEventListener('click', () => this.selectClass(id));
+        card.addEventListener('click', () => {
+          this.sfx.click();
+          this.selectClass(id);
+        });
         return card;
       }),
     );
@@ -376,8 +391,10 @@ export class UI {
 
         button.append(copy, knob);
         button.addEventListener('click', () => {
-          this.settings.set(def.key, !this.settings.current[def.key] as never);
+          const next = !this.settings.current[def.key];
+          this.settings.set(def.key, next as never);
           this.syncToggles();
+          this.sfx.toggle(Boolean(next));
         });
         return button;
       }),
@@ -477,6 +494,9 @@ export class UI {
   }
 
   private on(id: string, handler: () => void): void {
-    this.el(id).addEventListener('click', handler);
+    this.el(id).addEventListener('click', () => {
+      this.sfx.click();
+      handler();
+    });
   }
 }

@@ -8,6 +8,8 @@ export const DEFAULT_SETTINGS = {
     forceTouchControls: false,
     southpaw: false,
     vibration: true,
+    sfx: true,
+    music: true,
 };
 /**
  * Input accessibility settings.
