@@ -177,6 +177,15 @@ export class GameScene extends Phaser.Scene {
    * rectangles.
    */
   private healthBars!: Phaser.GameObjects.Graphics;
+  /**
+   * Every bullet's motion streak this frame, in one Graphics.
+   *
+   * Rounds move 13-25px per frame, so without a trail fast fire reads as a
+   * dotted line rather than a stream. One cleared-and-redrawn Graphics costs a
+   * single object for the whole volley, where per-bullet trail sprites would
+   * cost one each.
+   */
+  private bulletTrails!: Phaser.GameObjects.Graphics;
   private horde: HordeEngine | null = null;
 
   private enemies = new Map<EnemyId, EnemyView>();
@@ -301,6 +310,9 @@ export class GameScene extends Phaser.Scene {
 
     // Above the enemies, below the bullets.
     this.healthBars = this.add.graphics().setDepth(22);
+    this.bulletTrails = this.add.graphics().setDepth(23);
+
+    this.buildVignette();
 
     this.cameras.main
       .setBounds(0, 0, WORLD.width, WORLD.height)
@@ -525,6 +537,9 @@ export class GameScene extends Phaser.Scene {
    * there is exactly one code path.
    */
   private updateBullets(dt: number): void {
+    const trails = this.bulletTrails;
+    trails.clear();
+
     for (const b of this.bullets.items) {
       if (!b.active) continue;
 
@@ -539,6 +554,8 @@ export class GameScene extends Phaser.Scene {
         continue;
       }
       b.sprite.setPosition(b.x, b.y);
+      trails.lineStyle(3, b.sprite.tintTopLeft, 0.4);
+      trails.lineBetween(fromX, fromY, b.x, b.y);
 
       for (const enemy of this.enemies.values()) {
         if (b.hit.has(enemy.id)) continue;
@@ -1088,6 +1105,16 @@ export class GameScene extends Phaser.Scene {
   private spawnEnemyView(id: EnemyId, kind: EnemyKind, x: number, y: number): EnemyView {
     const def = ENEMY_DEFS[kind] ?? ENEMY_DEFS[EnemyKind.GlitchBug];
     const sprite = this.add.image(x, y, TEX.enemy(def.kind)).setDepth(20);
+
+    // Materialise, rather than appear. Skipped for the first couple of seconds
+    // so a client joining mid-wave does not play sixty of these at once — that
+    // burst is a state sync, not sixty things arriving.
+    if (this.time.now > 2000) {
+      sprite.setScale(0.2).setAlpha(0.3);
+      this.tweens.add({ targets: sprite, scale: 1, alpha: 1, duration: 260, ease: 'Back.easeOut' });
+      this.fx.spawnFlash(x, y, def.colour, def.radius);
+    }
+
     const view: EnemyView = { id, kind: def.kind, hp: def.hp, maxHp: def.hp, sprite, tx: x, ty: y, seen: this.snapshotTick };
     this.enemies.set(id, view);
     return view;
@@ -1147,9 +1174,12 @@ export class GameScene extends Phaser.Scene {
   }
 
   private updateRemoteBullets(dt: number): void {
+    const trails = this.bulletTrails;
     for (const b of this.remoteBullets.items) {
       if (!b.active) continue;
       b.life -= dt;
+      const fromX = b.x;
+      const fromY = b.y;
       b.x += b.vx * dt;
       b.y += b.vy * dt;
       if (b.life <= 0 || b.x < 0 || b.y < 0 || b.x > WORLD.width || b.y > WORLD.height) {
@@ -1158,6 +1188,8 @@ export class GameScene extends Phaser.Scene {
         continue;
       }
       b.sprite.setPosition(b.x, b.y);
+      trails.lineStyle(3, b.sprite.tintTopLeft, 0.3);
+      trails.lineBetween(fromX, fromY, b.x, b.y);
     }
   }
 
@@ -1337,6 +1369,28 @@ export class GameScene extends Phaser.Scene {
   }
 
   /* ---------------------------------------------------------------- arena */
+
+  /**
+   * Corner darkening, pinned to the camera.
+   *
+   * The Cyber-Pop look is deliberately bright, which also makes it flat — a
+   * uniformly lit rectangle has no centre. This is subtle enough not to dim the
+   * action but enough to frame it.
+   */
+  private buildVignette(): void {
+    const cam = this.cameras.main;
+    const vignette = this.add
+      .image(cam.width / 2, cam.height / 2, TEX.vignette)
+      .setScrollFactor(0)
+      .setDepth(150)
+      .setDisplaySize(cam.width, cam.height);
+
+    this.scale.on('resize', () => {
+      vignette
+        .setPosition(this.cameras.main.width / 2, this.cameras.main.height / 2)
+        .setDisplaySize(this.cameras.main.width, this.cameras.main.height);
+    });
+  }
 
   private buildArena(): void {
     this.add.tileSprite(0, 0, WORLD.width, WORLD.height, TEX.grid).setOrigin(0).setDepth(0);

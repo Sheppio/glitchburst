@@ -24,6 +24,8 @@ export class ProgressionSystem {
             x: 0, y: 0, vx: 0, vy: 0, homing: false, speed: 0, ttl: 0, active: false,
         }));
         this.powerUps = new Pool(() => ({
+            shadow: host.scene.add.image(0, 0, TEX.shadow).setDepth(11).setVisible(false),
+            orbit: host.scene.add.image(0, 0, TEX.orbit).setDepth(13).setVisible(false),
             sprite: host.scene.add.image(0, 0, TEX.powerUp('damage')).setDepth(14),
             upgrade: 'damage', x: 0, y: 0, ttl: 0, active: false,
         }));
@@ -188,13 +190,26 @@ export class ProgressionSystem {
         powerUp.y = clamp(originY, 40, WORLD.height - 40);
         powerUp.ttl = PROGRESSION.powerUpTtlSec;
         powerUp.active = true;
+        const colour = UPGRADES[upgrade].colour;
         powerUp.sprite
             .setTexture(TEX.powerUp(upgrade))
             .setPosition(powerUp.x, powerUp.y)
             .setVisible(true)
             .setAlpha(1)
             .setScale(0.2);
+        powerUp.orbit
+            .setPosition(powerUp.x, powerUp.y)
+            .setTint(colour)
+            .setVisible(true)
+            .setAlpha(0.55)
+            .setScale(0.2);
+        powerUp.shadow
+            .setPosition(powerUp.x, powerUp.y + 22)
+            .setVisible(true)
+            .setAlpha(0.9)
+            .setScale(0.55);
         this.host.scene.tweens.add({ targets: powerUp.sprite, scale: 1, duration: 320, ease: 'Back.easeOut' });
+        this.host.scene.tweens.add({ targets: powerUp.orbit, scale: 1, duration: 420, ease: 'Back.easeOut' });
         this.host.fx.ring(powerUp.x, powerUp.y, 90, UPGRADES[upgrade].colour, 420);
         this.host.banner(fromKill ? 'RARE DROP' : 'POWER-UP READY', UPGRADES[upgrade].name);
     }
@@ -205,24 +220,38 @@ export class ProgressionSystem {
                 continue;
             powerUp.ttl -= dt;
             if (powerUp.ttl <= 0) {
-                powerUp.active = false;
-                powerUp.sprite.setVisible(false);
+                this.retire(powerUp);
                 continue;
             }
-            // Bob and spin: a stationary hexagon on a static floor is easy to miss.
-            powerUp.sprite.setY(powerUp.y + Math.sin(this.host.scene.time.now / 260) * 5);
-            powerUp.sprite.setRotation(Math.sin(this.host.scene.time.now / 700) * 0.22);
-            if (powerUp.ttl < 4)
-                powerUp.sprite.setAlpha(0.4 + Math.sin(this.host.scene.time.now / 80) * 0.4);
+            // Bob, orbit and breathe. Nothing else in the arena moves like this, so
+            // the motion identifies a pickup from across the screen before its shape
+            // or colour is legible — which is the point, in a crowd of enemies.
+            const t = this.host.scene.time.now;
+            const bob = Math.sin(t / 300) * 6;
+            powerUp.sprite.setY(powerUp.y + bob).setRotation(Math.sin(t / 900) * 0.1);
+            powerUp.orbit.setY(powerUp.y + bob * 0.6).setRotation(-t / 900);
+            // The shadow shrinks as the crystal rises, which is what sells the hover.
+            powerUp.shadow.setScale(0.55 - bob * 0.006, 0.55).setAlpha(0.9 - bob * 0.02);
+            if (powerUp.ttl < 4) {
+                const blink = 0.35 + Math.abs(Math.sin(t / 90)) * 0.65;
+                powerUp.sprite.setAlpha(blink);
+                powerUp.orbit.setAlpha(blink * 0.55);
+            }
             if (!who.canCollect)
                 continue;
             const reach = PROGRESSION.powerUpPickupRadius + who.radius;
             if (dist2(who.x, who.y, powerUp.x, powerUp.y) > reach * reach)
                 continue;
-            powerUp.active = false;
-            powerUp.sprite.setVisible(false);
+            this.retire(powerUp);
             this.applyUpgrade(powerUp.upgrade);
         }
+    }
+    /** A power-up is three sprites; they must leave play together. */
+    retire(powerUp) {
+        powerUp.active = false;
+        powerUp.sprite.setVisible(false);
+        powerUp.orbit.setVisible(false);
+        powerUp.shadow.setVisible(false);
     }
     applyUpgrade(id) {
         const who = this.host.collector();

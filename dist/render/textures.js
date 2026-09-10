@@ -12,6 +12,9 @@ export const TEX = {
     ring: 'tex-ring',
     decoy: 'tex-decoy',
     chip: 'tex-chip',
+    orbit: 'tex-orbit',
+    shadow: 'tex-shadow',
+    spark: 'tex-spark',
     powerUp: (id) => `tex-powerup-${id}`,
     grid: 'tex-grid',
     vignette: 'tex-vignette',
@@ -33,6 +36,10 @@ export function createTextures(scene) {
     drawBullets(scene);
     drawDecoy(scene);
     drawChip(scene);
+    drawOrbit(scene);
+    drawShadow(scene);
+    drawSpark(scene);
+    drawVignette(scene);
     for (const id of UPGRADE_ORDER)
         drawPowerUp(scene, UPGRADES[id]);
     for (const id of CLASS_ORDER)
@@ -252,60 +259,147 @@ function drawChip(scene) {
     g.destroy();
 }
 /**
- * A power-up node: a hexagonal container in the upgrade's colour, carrying a
- * glyph that says what it does at a glance — an arrow for speed, a chevron
- * stack for fire rate, a burst for damage.
+ * A power-up node: an upright crystal on a bright white core.
+ *
+ * Shape carries the meaning here. Every enemy is a filled, saturated silhouette
+ * — a magenta dart, an amber hexagon, a violet slab — so a pickup must not be
+ * any of those. The previous design was a hexagon in magenta or amber, which is
+ * to say it was shaped like a Firewall Drone and coloured like a Glitch Bug;
+ * players read it as something to shoot.
+ *
+ * This inverts the value structure instead of just changing the outline:
+ * enemies are saturated bodies with a dark rim, a pickup is a *white* body with
+ * a saturated frame. Even at a glance in a crowd, bright-cored means friendly.
  */
 function drawPowerUp(scene, def) {
-    const size = 60;
+    const size = 68;
     const c = size / 2;
-    const r = 20;
     const g = scene.make.graphics({ x: 0, y: 0 }, false);
-    g.fillStyle(def.colour, 0.2).fillCircle(c, c, r + 8);
-    const hex = (radius) => {
+    const crystal = (radius, waist) => {
         g.beginPath();
-        for (let n = 0; n < 6; n++) {
-            const a = (Math.PI / 3) * n - Math.PI / 2;
-            const px = c + Math.cos(a) * radius;
-            const py = c + Math.sin(a) * radius;
-            if (n === 0)
-                g.moveTo(px, py);
-            else
-                g.lineTo(px, py);
-        }
+        g.moveTo(c, c - radius);
+        g.lineTo(c + waist, c - radius * 0.35);
+        g.lineTo(c + waist, c + radius * 0.35);
+        g.lineTo(c, c + radius);
+        g.lineTo(c - waist, c + radius * 0.35);
+        g.lineTo(c - waist, c - radius * 0.35);
         g.closePath();
     };
-    g.fillStyle(0x0b1017, 0.9);
-    hex(r + 2);
+    g.fillStyle(def.colour, 0.18).fillCircle(c, c, 27);
+    g.fillStyle(def.colour, 1);
+    crystal(25, 17);
     g.fillPath();
     g.fillStyle(0xffffff, 1);
-    hex(r);
+    crystal(19, 12.5);
+    g.fillPath();
+    // Facet highlight: a flat white shape reads as a sticker, a shaded one reads
+    // as an object worth walking to.
+    g.fillStyle(def.colour, 0.16);
+    g.beginPath();
+    g.moveTo(c, c - 19).lineTo(c + 12.5, c - 6.6).lineTo(c, c + 19).closePath();
     g.fillPath();
     g.fillStyle(def.colour, 1);
-    hex(r - 4);
-    g.fillPath();
-    g.fillStyle(0xffffff, 1);
-    if (def.id === 'speed') {
-        // Forward chevron.
-        g.beginPath();
-        g.moveTo(c - 7, c - 9).lineTo(c + 8, c).lineTo(c - 7, c + 9).lineTo(c - 3, c).closePath();
-        g.fillPath();
+    drawGlyph(g, c, c, def.id);
+    g.generateTexture(TEX.powerUp(def.id), size, size);
+    g.destroy();
+}
+/** The mark inside a power-up, saying what it does without a word of text. */
+function drawGlyph(g, c, m, id) {
+    if (id === 'speed') {
+        // Double chevron — momentum.
+        for (const dx of [-4, 2]) {
+            g.beginPath();
+            g.moveTo(c + dx - 3, m - 7).lineTo(c + dx + 4, m).lineTo(c + dx - 3, m + 7).lineTo(c + dx - 0.5, m).closePath();
+            g.fillPath();
+        }
     }
-    else if (def.id === 'firerate') {
-        // Three stacked bars, reading as rate.
-        g.fillRect(c - 9, c - 7, 18, 3);
-        g.fillRect(c - 9, c - 1.5, 18, 3);
-        g.fillRect(c - 9, c + 4, 18, 3);
+    else if (id === 'firerate') {
+        // Three ascending bars — rate.
+        g.fillRect(c - 7, m + 1, 3.5, 6);
+        g.fillRect(c - 1.75, m - 3, 3.5, 10);
+        g.fillRect(c + 3.5, m - 7, 3.5, 14);
     }
     else {
-        // Impact burst.
-        for (let n = 0; n < 8; n++) {
-            const a = (Math.PI / 4) * n;
-            g.fillRect(c + Math.cos(a) * 5 - 1.5, c + Math.sin(a) * 5 - 1.5, 3, 3);
+        // Radiating burst — impact.
+        for (let n = 0; n < 6; n++) {
+            const a = (Math.PI / 3) * n;
+            g.fillRect(c + Math.cos(a) * 6.5 - 1.4, m + Math.sin(a) * 6.5 - 1.4, 2.8, 2.8);
         }
-        g.fillCircle(c, c, 3.5);
+        g.fillCircle(c, m, 3.6);
     }
-    g.generateTexture(TEX.powerUp(def.id), size, size);
+}
+/**
+ * Orbiting bracket, drawn behind a power-up and counter-rotated.
+ *
+ * Nothing in the game orbits anything, so the motion alone identifies a pickup
+ * from across the arena — before its shape or colour is even legible.
+ */
+function drawOrbit(scene) {
+    const size = 96;
+    const c = size / 2;
+    const g = scene.make.graphics({ x: 0, y: 0 }, false);
+    g.lineStyle(2.5, 0xffffff, 1);
+    for (let n = 0; n < 4; n++) {
+        const start = (Math.PI / 2) * n + 0.35;
+        g.beginPath();
+        g.arc(c, c, 40, start, start + 0.75, false);
+        g.strokePath();
+    }
+    for (let n = 0; n < 4; n++) {
+        const a = (Math.PI / 2) * n;
+        g.fillStyle(0xffffff, 1).fillRect(c + Math.cos(a) * 40 - 2, c + Math.sin(a) * 40 - 2, 4, 4);
+    }
+    g.generateTexture(TEX.orbit, size, size);
+    g.destroy();
+}
+/** Soft contact shadow. Grounds a floating object against a flat white floor. */
+function drawShadow(scene) {
+    const size = 64;
+    const g = scene.make.graphics({ x: 0, y: 0 }, false);
+    for (let r = 22; r > 0; r -= 1) {
+        g.fillStyle(0x0b1017, 0.02 * (1 - r / 22));
+        g.fillEllipse(size / 2, size / 2, r * 2, r * 0.9);
+    }
+    g.generateTexture(TEX.shadow, size, size);
+    g.destroy();
+}
+/** Four-point star, for sparkles that read differently to square pixel debris. */
+function drawSpark(scene) {
+    const size = 16;
+    const c = size / 2;
+    const g = scene.make.graphics({ x: 0, y: 0 }, false);
+    g.fillStyle(0xffffff, 1);
+    g.beginPath();
+    g.moveTo(c, 0).lineTo(c + 1.8, c - 1.8).lineTo(size, c).lineTo(c + 1.8, c + 1.8);
+    g.lineTo(c, size).lineTo(c - 1.8, c + 1.8).lineTo(0, c).lineTo(c - 1.8, c - 1.8);
+    g.closePath();
+    g.fillPath();
+    g.generateTexture(TEX.spark, size, size);
+    g.destroy();
+}
+/**
+ * Screen-space vignette. The arena is deliberately bright, which flattens it;
+ * darkening the corners gives the playfield a centre without dimming the
+ * action.
+ */
+function drawVignette(scene) {
+    const size = 256;
+    const c = size / 2;
+    const g = scene.make.graphics({ x: 0, y: 0 }, false);
+    // Concentric *rings*, not filled discs. Filling discs stacks alpha toward the
+    // middle, which darkens the centre — the exact opposite of a vignette, and it
+    // renders as a grey blob over the playfield.
+    //
+    // The outer radius overshoots the texture so the corners, which are the
+    // furthest points from centre, actually get covered.
+    const inner = c * 0.55;
+    const outer = c * 1.5;
+    for (let r = outer; r > inner; r -= 1.5) {
+        const t = (r - inner) / (outer - inner);
+        g.lineStyle(2.5, 0x243049, 0.02 * t * t);
+        g.strokeCircle(c, c, r);
+    }
+    g.generateTexture(TEX.vignette, size, size);
     g.destroy();
 }
 //# sourceMappingURL=textures.js.map

@@ -355,11 +355,20 @@ await step('collecting a power-up upgrades the player', async () => {
     await new Promise((r) => setTimeout(r, 300));
     const after = scene.progression.progress.stacks;
     const gained = Object.keys(after).find((k) => after[k] > before[k]);
+    // A power-up is three sprites — crystal, orbit and shadow. They have to
+    // leave play together, or collecting one strands its ring on the floor.
+    const stranded = scene.progression.powerUps.items.some(
+      (p) => !p.active && (p.sprite.visible || p.orbit.visible || p.shadow.visible),
+    );
     const changed =
       scene.progression.progress.damageMultiplier !== dmg ||
       scene.progression.progress.speedMultiplier !== spd ||
       scene.progression.progress.fireIntervalMultiplier !== rof;
-    return { ok: Boolean(gained) && changed, why: gained ?? 'no stack gained', gained };
+    return {
+      ok: Boolean(gained) && changed && !stranded,
+      why: stranded ? 'collected power-up left sprites on screen' : (gained ?? 'no stack gained'),
+      gained,
+    };
   });
   return { ok: out.ok, note: out.ok ? `gained a ${out.gained} stack` : out.why };
 });

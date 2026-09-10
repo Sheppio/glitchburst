@@ -34,6 +34,23 @@ export class Fx {
         const label = DATA_STRINGS[Math.floor(Math.random() * DATA_STRINGS.length)];
         this.floatText(x, y - 6, label, colour, 15 * scale, 900);
     }
+    /** Materialisation ring for an enemy arriving in the arena. */
+    spawnFlash(x, y, colour, radius) {
+        const ring = this.scene.add
+            .image(x, y, TEX.ring)
+            .setTint(colour)
+            .setDepth(this.depth - 2)
+            .setScale((radius * 3) / 128)
+            .setAlpha(0.8);
+        this.scene.tweens.add({
+            targets: ring,
+            scale: (radius * 0.6) / 128,
+            alpha: 0,
+            duration: 300,
+            ease: 'Cubic.easeOut',
+            onComplete: () => ring.destroy(),
+        });
+    }
     /** Small spark where a bullet connects, before the enemy is confirmed dead. */
     hitSpark(x, y, colour) {
         this.emitterFor(colour).explode(5, x, y);
