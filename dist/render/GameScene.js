@@ -16,9 +16,9 @@ import { TEX } from './textures.js';
  *
  * Two responsibilities are worth reading in isolation:
  *
- *  - `hostTick()` — if this client won the election it owns the horde. It steps
- *    `HordeEngine` every frame for smooth local motion, but *broadcasts* only
- *    20 times a second, as one batched string for the entire horde.
+ *  - `hostStep()` — if this client won the election it owns the horde. It runs
+ *    on a fixed 20Hz timer, independent of rendering, and broadcasts the whole
+ *    horde as one batched string per tick.
  *
  *  - `onHordeSnapshot()` — if this client is a peer it never simulates enemies.
  *    It unpacks that string, spawns anything it has not seen before (which is
@@ -66,14 +66,23 @@ export class GameScene extends Phaser.Scene {
     score = 0;
     snapshotTick = 0;
     lastWave = 0;
-    /** Accumulators for the fixed-rate publishers. */
-    hordeAccumulator = 0;
+    /**
+     * Host simulation timer.
+     *
+     * Deliberately NOT driven by the render loop. Tying the horde to
+     * requestAnimationFrame makes the whole room's difficulty a function of the
+     * host's graphics card: a host rendering at 8fps would broadcast at 8Hz and
+     * simulate in 125ms steps, and every peer would see a stuttering horde
+     * through no fault of their own. A fixed interval keeps the authoritative
+     * tick at 20Hz regardless of what the host's screen is doing.
+     */
+    hostTimer = 0;
+    lastHostStepAt = 0;
+    /** Accumulator for the fixed-rate player-state publisher. */
     playerAccumulator = 0;
     damageAccumulator = 0;
     /** Damage this client has dealt but not yet reported, keyed by enemy. */
     pendingDamage = new Map();
-    /** Host-side outbound event queue, flushed with the horde snapshot. */
-    outboundEvents = [];
     unsubs = [];
     nextLocalId = 1;
     constructor() {
@@ -131,10 +140,9 @@ export class GameScene extends Phaser.Scene {
         this.updateBullets(dt);
         this.updateEnemyBullets(dt);
         this.updateFields(dt);
-        if (this.horde)
-            this.hostTick(dt, delta);
-        else
-            this.peerTick(delta);
+        // Enemy motion is interpolated identically whether this client is the host
+        // or a peer: the host's own simulation only refreshes targets at 20Hz too.
+        this.interpolateEnemies(delta);
         this.updateRemotes(delta);
         this.flushDamage(dt);
         this.publishPlayer(dt);
@@ -392,10 +400,22 @@ export class GameScene extends Phaser.Scene {
      * second, which no public broker will carry; batched at 20 Hz it is 20
      * messages a second, each about 1.4 KB.
      */
-    hostTick(dt, deltaMs) {
+    hostStep() {
         const horde = this.horde;
+        if (!horde)
+            return;
+        // Real elapsed time, clamped. The clamp matters because browsers throttle
+        // timers in background tabs: without it, a host that was hidden for ten
+        // seconds would resume by advancing the simulation ten seconds in one step
+        // and teleport the entire horde into the squad.
+        const now = performance.now();
+        const dt = Math.min(now - this.lastHostStepAt, 100) / 1000;
+        this.lastHostStepAt = now;
         const result = horde.step(dt, this.aiTargets());
-        // Mirror the authoritative state into the local views.
+        // Mirror the authoritative state into the local views. Positions go to the
+        // view's *target*, not the sprite — the host interpolates its own horde on
+        // exactly the same path a peer does, so there is one movement code path and
+        // the host's own enemies stay smooth between 20Hz steps.
         this.snapshotTick++;
         for (const enemy of horde.enemies.values()) {
             const view = this.enemies.get(enemy.id) ?? this.spawnEnemyView(enemy.id, enemy.kind, enemy.x, enemy.y);
@@ -404,10 +424,6 @@ export class GameScene extends Phaser.Scene {
             view.hp = enemy.hp;
             view.maxHp = enemy.maxHp;
             view.seen = this.snapshotTick;
-            view.sprite.setPosition(enemy.x, enemy.y);
-            if (enemy.kind !== EnemyKind.TrojanTank) {
-                view.sprite.setRotation(Math.atan2(enemy.vy, enemy.vx));
-            }
         }
         this.pruneUnseen();
         for (const event of result.events) {
@@ -426,19 +442,24 @@ export class GameScene extends Phaser.Scene {
             if (kill.attacker === this.me.id)
                 this.score += kill.score;
         }
-        this.outboundEvents.push(...result.events);
-        this.hordeAccumulator += deltaMs;
-        const interval = 1000 / NET.hordeHz;
-        if (this.hordeAccumulator < interval)
-            return;
-        this.hordeAccumulator %= interval;
         // ---- the batched broadcast (requirement 3) -------------------------
         const room = this.cfg.room.roomId;
         this.cfg.net.publish(Topics.hordePositions(room), encodeHorde(horde.enemies.values()));
-        if (this.outboundEvents.length) {
-            this.cfg.net.publish(Topics.hordeEvents(room), encodeEvents(this.outboundEvents));
-            this.outboundEvents.length = 0;
+        if (result.events.length) {
+            this.cfg.net.publish(Topics.hordeEvents(room), encodeEvents(result.events));
         }
+    }
+    startHostLoop() {
+        if (this.hostTimer !== 0)
+            return;
+        this.lastHostStepAt = performance.now();
+        this.hostTimer = window.setInterval(() => this.hostStep(), 1000 / NET.hordeHz);
+    }
+    stopHostLoop() {
+        if (this.hostTimer === 0)
+            return;
+        window.clearInterval(this.hostTimer);
+        this.hostTimer = 0;
     }
     /** Players plus decoys. Decoys carry a priority multiplier the AI divides by. */
     aiTargets() {
@@ -471,22 +492,28 @@ export class GameScene extends Phaser.Scene {
             // clearing the board. The promoted peer has interpolated positions for
             // every one of them, which is close enough to resume from.
             this.horde.adopt([...this.enemies.values()].map((v) => ({ id: v.id, x: v.sprite.x, y: v.sprite.y, kind: v.kind, hp: v.hp })), this.lastWave);
+            this.startHostLoop();
             if (reason !== 'initial') {
                 this.cfg.onBanner('AUTHORITY ACQUIRED', 'This client now runs the horde');
             }
         }
         else if (!isHost && this.horde) {
+            this.stopHostLoop();
             this.horde = null;
-            this.outboundEvents.length = 0;
             this.cfg.onBanner('AUTHORITY RELEASED', 'Another client is running the horde');
         }
     }
     /* ----------------------------------------------------------- peer duties */
     /**
-     * Peer-side interpolation (requirement 6). Snapshots land every 50 ms; frames
+     * Enemy interpolation (requirement 6). Targets refresh every 50 ms; frames
      * happen every 16. Without this the horde advances in visible steps.
+     *
+     * This runs on the host as well as on peers. Since the host's simulation is
+     * now a fixed 20Hz timer rather than a per-frame step, its own horde needs
+     * exactly the same smoothing that a peer's does — and sharing the path means
+     * host and peers cannot drift apart visually.
      */
-    peerTick(deltaMs) {
+    interpolateEnemies(deltaMs) {
         for (const view of this.enemies.values()) {
             glide(view.sprite, view.tx, view.ty, RENDER.enemyLerp, deltaMs, RENDER.snapDistance);
             if (view.kind !== EnemyKind.TrojanTank) {
@@ -815,6 +842,7 @@ export class GameScene extends Phaser.Scene {
         }
     }
     teardown() {
+        this.stopHostLoop();
         for (const unsub of this.unsubs)
             unsub();
         this.unsubs = [];

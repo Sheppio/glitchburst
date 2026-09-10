@@ -53,6 +53,15 @@ await step('deploy boots Phaser and enters the HUD', async () => {
   return { ok: true, note: `canvas ${size}` };
 });
 
+// The test player never moves, so a wave of eleven will eventually corner and
+// kill it — and a downed player cannot fire or use abilities, which would make
+// the two combat assertions below flaky for reasons unrelated to what they
+// test. Keep it topped up: a real player would be dodging.
+await page.evaluate(() => {
+  const scene = window.glitchburst.game.scene.getScene('game');
+  window.__keepAlive = setInterval(() => { scene.me.hp = scene.me.maxHp; }, 100);
+});
+
 await step('client wins election and becomes host', async () => {
   await page.waitForFunction(() => window.glitchburst?.room?.isHost === true, null, { timeout: 6000 });
   const host = await page.textContent('#hud-host');
@@ -128,6 +137,29 @@ await step('ability fields reach the wire', async () => {
   await page.waitForTimeout(400);
   const after = await page.evaluate(() => window.__published.filter((m) => m.topic.endsWith('/ability')).length);
   return { ok: after > before, note: `${after - before} ability broadcast` };
+});
+
+// The host's authoritative tick must not be a function of its own framerate.
+// A host on a weak GPU or a throttled tab would otherwise broadcast slowly and
+// simulate in huge steps, degrading the game for every peer in the room.
+await step('broadcast rate survives a starved renderer', async () => {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Emulation.setCPUThrottlingRate', { rate: 10 });
+
+  const measure = await page.evaluate(async () => {
+    const count = () => window.__published.filter((m) => m.topic.endsWith('/horde/positions')).length;
+    const before = count();
+    const t0 = performance.now();
+    await new Promise((r) => setTimeout(r, 3000));
+    const seconds = (performance.now() - t0) / 1000;
+    return { hz: (count() - before) / seconds, fps: window.glitchburst.game.loop.actualFps };
+  });
+
+  await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
+  return {
+    ok: measure.hz >= 14,
+    note: `${measure.hz.toFixed(1)}Hz broadcast while rendering at ${measure.fps.toFixed(0)}fps`,
+  };
 });
 
 await step('no uncaught errors', async () => ({ ok: errors.length === 0, note: errors.slice(0, 4).join(' | ') || 'clean' }));

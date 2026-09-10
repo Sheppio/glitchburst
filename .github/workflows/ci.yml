@@ -1,0 +1,81 @@
+name: CI
+
+# Publishing is handled by GitHub Pages' own deploy-from-branch build, so this
+# workflow deliberately does NOT deploy. Browser tests are timing sensitive on
+# shared runners, and a slow runner must not be able to stop the site going up.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Typecheck and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm run check
+      - run: npm run build
+
+      # dist/ is committed because Pages serves it straight from the branch, so
+      # it must never drift from src/ — that would silently publish stale code.
+      - name: Verify committed dist/ is up to date
+        run: |
+          if ! git diff --quiet -- dist; then
+            echo "::error::dist/ is stale. Run 'npm run build' and commit the result."
+            git diff --stat -- dist
+            exit 1
+          fi
+
+  test-sim:
+    name: Simulation and codec
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: node test/sim.test.mjs
+
+  test-browser:
+    name: Browser (${{ matrix.suite }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [smoke, multiplayer]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: node test/${{ matrix.suite }}.test.mjs
+
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rig-${{ matrix.suite }}
+          path: test/rig/*.png
+          if-no-files-found: ignore

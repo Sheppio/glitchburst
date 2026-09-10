@@ -36,7 +36,7 @@ Developing needs the compiler:
 ```bash
 npm install
 npm run watch      # tsc --watch, rebuilding dist/ on save
-npm test           # 63 tests: simulation, codec, single client, two clients
+npm test           # 64 tests: simulation, codec, single client, two clients
 ```
 
 `dist/` is committed on purpose — it is what GitHub Pages serves.
@@ -101,6 +101,18 @@ smaller), or ~36 KB/s at 20 Hz. Positions round to whole pixels because peers
 interpolate anyway, so the sub-pixel precision would be discarded on arrival.
 
 Deaths, drone shots and wave banners batch the same way onto `…/horde/events`.
+
+The host's tick is a **fixed 20 Hz timer, not the render loop**. Tying the
+simulation to `requestAnimationFrame` would make the whole room's experience a
+function of the host's graphics card — a host rendering at 8 fps would broadcast
+at 8 Hz and simulate in 125 ms steps, and every peer would see a stuttering
+horde through no fault of their own. There is a regression test for exactly
+this: it CPU-throttles the renderer to ~14 fps and asserts the broadcast holds
+at 20 Hz.
+
+Because the host now refreshes its own enemies at 20 Hz too, it interpolates
+them on the same path a peer does — one movement code path, and host and peers
+cannot drift apart visually.
 
 ### Mid-game joins
 
@@ -261,25 +273,44 @@ for a game — just don't build anything that needs privacy on top of it.
 npm test
 ```
 
-63 checks across three suites. The browser suites vendor Phaser locally and
+64 checks across three suites. The browser suites vendor Phaser locally and
 swap MQTT for a loopback stub that relays over `BroadcastChannel`, so two tabs
 share one "broker" and a real multi-client room can be tested offline.
 
 - **`sim.test.mjs`** (31) — codec round-trips, truncation tolerance, payload
   size at the cap, enemy cap, difficulty scaling, damage attribution, steering,
   decoy priority, host adoption, shockwave.
-- **`smoke.test.mjs`** (14) — menus, Phaser boot, election, 20 Hz batching,
-  attacker-authority kills, abilities.
+- **`smoke.test.mjs`** (15) — menus, Phaser boot, election, 20 Hz batching,
+  attacker-authority kills, abilities, and broadcast rate under a starved
+  renderer.
 - **`multiplayer.test.mjs`** (18) — two clients: election, peer unpacking,
   mid-game join, interpolation, squad scaling, and **host failover** with the
   horde carried through.
 
-These caught four real bugs during development, including a zero-magnitude
-deadzone that produced `NaN` movement — which then propagated into enemy spawns
-and made *every* bullet register a hit, because `NaN` fails every bounds check
-it is given.
+These caught five real bugs, including a zero-magnitude deadzone that produced
+`NaN` movement — which propagated into enemy spawns and made *every* bullet
+register a hit, because `NaN` fails every bounds check it is given — and the
+host tick being coupled to the render loop, which CI surfaced by running the
+game at 3 Hz on a software renderer.
+
+### Known limitations
+
+- Browsers throttle timers in background tabs, so a host that switches away
+  slows its own simulation. The step clamps `dt` so the horde cannot teleport on
+  return, but the room will run slowly until the host comes back. Election does
+  not currently cover this case, because a throttled host still heartbeats.
+- Public brokers give no delivery guarantees. Snapshots are full state, so a
+  dropped one self-heals on the next tick; a dropped *damage report*, however,
+  is simply lost.
 
 ## Deployment
 
-GitHub Pages serves `main` at the repository root. `.nojekyll` is present so
-nothing is filtered. To deploy: `npm run build`, commit `dist/`, push.
+GitHub Pages is set to **deploy from a branch**: `main`, folder `/ (root)`.
+`.nojekyll` is present so nothing is filtered. To deploy: `npm run build`,
+commit `dist/`, push.
+
+CI (`.github/workflows/ci.yml`) deliberately **does not deploy**. The browser
+suites are timing sensitive on shared runners, and a slow runner should not be
+able to stop the site going up. CI does fail the build if committed `dist/` has
+drifted from `src/`, which is the one way this layout could silently ship stale
+code.
