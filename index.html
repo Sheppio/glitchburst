@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <meta name="theme-color" content="#f2f5f9" />
+    <meta name="description" content="GLITCHBURST — a serverless co-op horde shooter played entirely in the browser over MQTT." />
+    <title>GLITCHBURST</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23f2f5f9'/%3E%3Ccircle cx='16' cy='16' r='8' fill='none' stroke='%2300c8dc' stroke-width='3'/%3E%3Ccircle cx='16' cy='16' r='3' fill='%23ff2d95'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="./css/ui.css" />
+
+    <!--
+      No bundler. Bare specifiers resolve through this import map, so the
+      TypeScript output in ./dist can `import Phaser from 'phaser'` and the
+      browser fetches the CDN build directly. GitHub Pages serves this whole
+      directory as-is.
+    -->
+    <script type="importmap">
+      {
+        "imports": {
+          "phaser": "https://cdn.jsdelivr.net/npm/phaser@3.90.0/dist/phaser.esm.min.js",
+          "mqtt": "https://cdn.jsdelivr.net/npm/mqtt@5.15.2/dist/mqtt.esm.js"
+        }
+      }
+    </script>
+  </head>
+
+  <body>
+    <div id="game-root" aria-hidden="true"></div>
+
+    <div id="ui-root" class="ui-root">
+      <!-- ------------------------------------------------------- MAIN MENU -->
+      <section class="screen" id="screen-menu" data-screen="menu">
+        <div class="panel panel-wide">
+          <header class="brand">
+            <h1 class="brand-title">GLITCH<span>BURST</span></h1>
+            <p class="brand-sub">Co-op mainframe defence &middot; serverless &middot; MQTT over WebSockets</p>
+          </header>
+
+          <div class="button-row">
+            <button class="btn btn-primary" id="btn-create" data-nav-default>
+              <span class="btn-key">A</span> Create room
+            </button>
+            <button class="btn" id="btn-join-screen">Join room</button>
+            <button class="btn btn-ghost" id="btn-settings">Settings</button>
+          </div>
+
+          <!--
+            Console prompt. Xbox Edge and the PlayStation browser only route
+            gamepad input to the page while the page itself holds focus.
+          -->
+          <aside class="console-banner" id="console-banner">
+            <span class="console-glyph">&#9678;</span>
+            <div>
+              <strong>Playing on console?</strong>
+              Press the <b>Menu / Options</b> button to lock gamepad focus to the browser window.
+              <span class="console-sub">D-Pad or left stick to move &middot; <b>A</b> / <b>Cross</b> to select</span>
+            </div>
+          </aside>
+
+          <footer class="panel-foot">
+            <span id="net-status" class="pill pill-idle">offline</span>
+            <span class="pill pill-quiet" id="scheme-pill">Keyboard &amp; Mouse</span>
+          </footer>
+        </div>
+      </section>
+
+      <!-- ------------------------------------------------------- JOIN ROOM -->
+      <section class="screen" id="screen-join" data-screen="join" hidden>
+        <div class="panel">
+          <h2 class="panel-title">Join a room</h2>
+          <p class="panel-hint">Room codes are four characters. Everyone on the same broker and code plays together.</p>
+
+          <div class="field">
+            <label for="input-room">Room code</label>
+            <input
+              id="input-room"
+              type="text"
+              maxlength="6"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="A7K2"
+              data-nav-default
+            />
+          </div>
+
+          <div class="field">
+            <label for="select-broker">Broker</label>
+            <select id="select-broker"></select>
+          </div>
+
+          <div class="button-row">
+            <button class="btn btn-primary" id="btn-join">Connect</button>
+            <button class="btn btn-ghost" id="btn-join-back" data-nav-back>Back</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- --------------------------------------------------- CHARACTER SELECT -->
+      <section class="screen" id="screen-class" data-screen="class" hidden>
+        <div class="panel panel-wide">
+          <h2 class="panel-title">
+            Select program
+            <span class="room-chip">ROOM <b id="room-code-label">····</b></span>
+          </h2>
+
+          <div class="field">
+            <label for="input-callsign">Callsign</label>
+            <input
+              id="input-callsign"
+              type="text"
+              maxlength="14"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="ANON"
+            />
+          </div>
+
+          <div class="class-grid" id="class-grid"></div>
+
+          <div class="button-row">
+            <button class="btn btn-primary" id="btn-deploy" data-nav-default>Deploy</button>
+            <button class="btn btn-ghost" id="btn-class-back" data-nav-back>Back</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- --------------------------------------------------------- SETTINGS -->
+      <section class="screen" id="screen-settings" data-screen="settings" hidden>
+        <div class="panel">
+          <h2 class="panel-title">Input &amp; accessibility</h2>
+
+          <div class="toggle-list" id="toggle-list"></div>
+
+          <div class="field">
+            <label for="range-deadzone">
+              Stick deadzone <span class="value" id="deadzone-value">0.15</span>
+            </label>
+            <input id="range-deadzone" type="range" min="0.15" max="0.45" step="0.01" />
+            <p class="field-hint">
+              A fixed 0.15 per-axis filter is always applied to stop stick drift on worn controllers.
+              This adds radial deadzone on top.
+            </p>
+          </div>
+
+          <div class="button-row">
+            <button class="btn btn-primary" id="btn-settings-back" data-nav-back data-nav-default>Done</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ------------------------------------------------------- CONNECTING -->
+      <section class="screen" id="screen-connecting" data-screen="connecting" hidden>
+        <div class="panel panel-narrow">
+          <h2 class="panel-title">Establishing link</h2>
+          <div class="loader"><i></i><i></i><i></i></div>
+          <p class="panel-hint" id="connect-detail">Opening WebSocket to broker…</p>
+          <div class="button-row">
+            <button class="btn btn-ghost" id="btn-cancel-connect" data-nav-back data-nav-default>Cancel</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- -------------------------------------------------------------- HUD -->
+      <section class="screen screen-hud" id="screen-hud" data-screen="hud" hidden>
+        <div class="hud-top">
+          <div class="hud-block">
+            <span class="hud-label">Wave</span>
+            <span class="hud-value" id="hud-wave">0</span>
+          </div>
+          <div class="hud-block">
+            <span class="hud-label">Hostiles</span>
+            <span class="hud-value" id="hud-enemies">0</span>
+          </div>
+          <div class="hud-block">
+            <span class="hud-label">Score</span>
+            <span class="hud-value" id="hud-score">0</span>
+          </div>
+          <div class="hud-block">
+            <span class="hud-label">Squad</span>
+            <span class="hud-value" id="hud-players">1/4</span>
+          </div>
+          <div class="hud-block hud-room">
+            <span class="hud-label">Room</span>
+            <span class="hud-value" id="hud-room">····</span>
+          </div>
+          <div class="hud-block hud-host">
+            <span class="hud-label">Authority</span>
+            <span class="hud-value" id="hud-host">—</span>
+          </div>
+        </div>
+
+        <div class="hud-squad" id="hud-squad"></div>
+
+        <div class="hud-bottom">
+          <div class="health">
+            <div class="health-bar"><i id="health-fill"></i></div>
+            <span class="health-text" id="health-text">100 / 100</span>
+          </div>
+          <div class="ability" id="ability-chip">
+            <span class="ability-name" id="ability-name">Ability</span>
+            <span class="ability-state" id="ability-state">READY</span>
+          </div>
+        </div>
+
+        <div class="hud-banner" id="hud-banner" hidden>
+          <strong id="hud-banner-text"></strong>
+          <span id="hud-banner-sub"></span>
+        </div>
+
+        <button class="btn btn-quiet hud-leave" id="btn-leave" data-nav-skip>Leave</button>
+      </section>
+
+      <!-- ----------------------------------------------------------- TOASTS -->
+      <div class="toasts" id="toasts" aria-live="polite"></div>
+    </div>
+
+    <script type="module" src="./dist/main.js"></script>
+  </body>
+</html>

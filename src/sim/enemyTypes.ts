@@ -1,0 +1,83 @@
+import { EnemyKind } from '../types.js';
+
+export interface EnemyDef {
+  kind: EnemyKind;
+  name: string;
+  /** Malware family flavour text shown on the death burst. */
+  tag: string;
+  hp: number;
+  speed: number;
+  radius: number;
+  /** Damage applied to a player on contact, per hit. Victim-authority (requirement 4). */
+  contactDamage: number;
+  /** Seconds between contact hits on the same player. */
+  contactCooldown: number;
+  colour: number;
+  /** Relative spawn weight, scaled by wave number in `HordeEngine`. */
+  weight: number;
+  score: number;
+  /** Present only on ranged enemies. */
+  ranged?: {
+    /** The drone tries to hover at this distance from its target. */
+    preferredRange: number;
+    fireIntervalSec: number;
+    projectileSpeed: number;
+    projectileDamage: number;
+    projectileLifeSec: number;
+  };
+}
+
+export const ENEMY_DEFS: Record<EnemyKind, EnemyDef> = {
+  [EnemyKind.GlitchBug]: {
+    kind: EnemyKind.GlitchBug,
+    name: 'Glitch Bug',
+    tag: '0xBUG',
+    hp: 30,
+    speed: 168,
+    radius: 13,
+    contactDamage: 7,
+    contactCooldown: 0.6,
+    colour: 0xff2d95,
+    weight: 68,
+    score: 10,
+  },
+  [EnemyKind.FirewallDrone]: {
+    kind: EnemyKind.FirewallDrone,
+    name: 'Firewall Drone',
+    tag: 'ICE.SYS',
+    hp: 58,
+    speed: 108,
+    radius: 19,
+    contactDamage: 4,
+    contactCooldown: 0.8,
+    colour: 0xffb300,
+    weight: 24,
+    score: 25,
+    ranged: {
+      preferredRange: 300,
+      fireIntervalSec: 1.7,
+      projectileSpeed: 330,
+      projectileDamage: 9,
+      projectileLifeSec: 3.2,
+    },
+  },
+  [EnemyKind.TrojanTank]: {
+    kind: EnemyKind.TrojanTank,
+    name: 'Trojan Tank',
+    tag: 'TROJAN',
+    hp: 265,
+    speed: 56,
+    radius: 33,
+    contactDamage: 18,
+    contactCooldown: 0.9,
+    colour: 0x7a5cff,
+    weight: 8,
+    score: 60,
+  },
+};
+
+/** Fragments of "leaked data" that spray out of a corpse. */
+export const DATA_STRINGS = [
+  '0xDEAD', 'NULL', 'SEGV', '11010', 'ERR_', 'void*', '<EOF>', '0x00FF',
+  'PURGED', 'free()', 'ACK', '404', 'kill -9', '/dev/null', 'FLUSH',
+];

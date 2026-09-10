@@ -1,0 +1,194 @@
+import type { ClassId } from '../types.js';
+
+export interface WeaponDef {
+  name: string;
+  /** Seconds between shots. */
+  fireIntervalSec: number;
+  damage: number;
+  /** Projectiles per trigger pull. */
+  pellets: number;
+  /** Total cone width in radians, spread evenly across pellets. */
+  spread: number;
+  speed: number;
+  /** Seconds a projectile survives — this is what makes the shotgun short-ranged. */
+  lifeSec: number;
+  /** How many enemies a single projectile passes through before expiring. */
+  pierce: number;
+  radius: number;
+  knockback: number;
+}
+
+export type AbilityKind = 'overclock' | 'shockwave' | 'decoy' | 'healfield';
+
+export interface AbilityDef {
+  kind: AbilityKind;
+  name: string;
+  blurb: string;
+  cooldownSec: number;
+  durationSec: number;
+  radius: number;
+  /** Meaning depends on kind: heal/sec, knockback impulse, stun seconds, or multiplier. */
+  magnitude: number;
+}
+
+export interface ClassDef {
+  id: ClassId;
+  name: string;
+  role: string;
+  blurb: string;
+  colour: number;
+  cssColour: string;
+  maxHp: number;
+  speed: number;
+  radius: number;
+  weapon: WeaponDef;
+  ability: AbilityDef;
+}
+
+/**
+ * The four playable security programs.
+ *
+ * Everything that differentiates a class is data, not code: the weapon is
+ * driven entirely by `WeaponDef`, and abilities dispatch on `AbilityDef.kind`
+ * in one switch inside `GameScene`. Adding a fifth class means adding an entry
+ * here plus one case in that switch.
+ */
+export const CLASSES: Record<ClassId, ClassDef> = {
+  overclocker: {
+    id: 'overclocker',
+    name: 'Overclocker',
+    role: 'DPS',
+    blurb: 'Piercing beam weapon. Burns through a whole column of malware at once.',
+    colour: 0x00e5ff,
+    cssColour: '#00e5ff',
+    maxHp: 100,
+    speed: 252,
+    radius: 16,
+    weapon: {
+      name: 'Overclocked Laser',
+      fireIntervalSec: 0.095,
+      damage: 11,
+      pellets: 1,
+      spread: 0.02,
+      speed: 1500,
+      lifeSec: 0.55,
+      pierce: 3,
+      radius: 5,
+      knockback: 20,
+    },
+    ability: {
+      kind: 'overclock',
+      name: 'Thermal Runaway',
+      blurb: '+90% fire rate and +35% speed for 5s.',
+      cooldownSec: 14,
+      durationSec: 5,
+      radius: 0,
+      magnitude: 1.9,
+    },
+  },
+
+  fireman: {
+    id: 'fireman',
+    name: 'Fireman',
+    role: 'Tank',
+    blurb: 'Wide, short-range EMP burst. Soaks damage and clears space.',
+    colour: 0xffb300,
+    cssColour: '#ffb300',
+    maxHp: 190,
+    speed: 196,
+    radius: 19,
+    weapon: {
+      name: 'EMP Shotgun',
+      fireIntervalSec: 0.56,
+      damage: 12,
+      pellets: 7,
+      spread: 0.58,
+      speed: 820,
+      lifeSec: 0.3,
+      pierce: 1,
+      radius: 6,
+      knockback: 120,
+    },
+    ability: {
+      kind: 'shockwave',
+      name: 'Purge Pulse',
+      blurb: 'Knocks back and stuns every nearby process.',
+      cooldownSec: 10,
+      durationSec: 0.45,
+      radius: 265,
+      magnitude: 1.6,
+    },
+  },
+
+  glitcher: {
+    id: 'glitcher',
+    name: 'Glitcher',
+    role: 'Utility',
+    blurb: 'Fast, fragile. Rewrites what the horde thinks it is chasing.',
+    colour: 0xff2d95,
+    cssColour: '#ff2d95',
+    maxHp: 90,
+    speed: 288,
+    radius: 15,
+    weapon: {
+      name: 'Fork Bomb SMG',
+      fireIntervalSec: 0.13,
+      damage: 9,
+      pellets: 1,
+      spread: 0.09,
+      speed: 1020,
+      lifeSec: 0.75,
+      pierce: 1,
+      radius: 5,
+      knockback: 30,
+    },
+    ability: {
+      kind: 'decoy',
+      name: 'Decoy Hologram',
+      blurb: 'Drops a spoofed process the horde targets for 5s.',
+      cooldownSec: 12,
+      durationSec: 5,
+      radius: 0,
+      magnitude: 1,
+    },
+  },
+
+  encoder: {
+    id: 'encoder',
+    name: 'Encoder',
+    role: 'Support',
+    blurb: 'Deploys a checksum field that repairs allies standing inside it.',
+    colour: 0x7cff00,
+    cssColour: '#7cff00',
+    maxHp: 120,
+    speed: 228,
+    radius: 16,
+    weapon: {
+      name: 'Parity Lance',
+      fireIntervalSec: 0.22,
+      damage: 13,
+      pellets: 1,
+      spread: 0.04,
+      speed: 940,
+      lifeSec: 0.7,
+      pierce: 2,
+      radius: 5,
+      knockback: 40,
+    },
+    ability: {
+      kind: 'healfield',
+      name: 'Checksum Field',
+      blurb: 'Heals allies inside the node for 8s.',
+      cooldownSec: 16,
+      durationSec: 8,
+      radius: 150,
+      magnitude: 13,
+    },
+  },
+};
+
+export const CLASS_ORDER: ClassId[] = ['overclocker', 'fireman', 'glitcher', 'encoder'];
+
+export function isClassId(value: string): value is ClassId {
+  return value in CLASSES;
+}

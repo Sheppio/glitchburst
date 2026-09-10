@@ -1,0 +1,103 @@
+/**
+ * GLITCHBURST — global configuration.
+ *
+ * NOTE ON BROKERS: the game is served from GitHub Pages over HTTPS, so the
+ * browser will refuse any plaintext `ws://` connection (mixed content). Every
+ * broker endpoint below MUST be `wss://`.
+ */
+/** Public, unauthenticated brokers. Anyone can subscribe — do not put secrets on these topics. */
+export const BROKERS = [
+    { id: 'hivemq', label: 'HiveMQ (public)', url: 'wss://broker.hivemq.com:8884/mqtt' },
+    { id: 'emqx', label: 'EMQX (public)', url: 'wss://broker.emqx.io:8084/mqtt' },
+    { id: 'mosquitto', label: 'Eclipse Mosquitto (public)', url: 'wss://test.mosquitto.org:8081/mqtt' },
+];
+export const NET = {
+    /** Root of the topic tree. */
+    topicRoot: 'tds',
+    /** Host broadcasts the whole horde this many times per second (requirement 3). */
+    hordeHz: 20,
+    /** Each client broadcasts its own player state this often. */
+    playerHz: 15,
+    /** Host proves it is alive this often. */
+    heartbeatHz: 2,
+    /** No heartbeat for this long => the host is presumed dead and an election runs. */
+    hostTimeoutMs: 2500,
+    /** Presence ping interval; peers silent for 3x this are dropped from the roster. */
+    presenceMs: 1000,
+    presenceTimeoutMs: 5000,
+    /** Enemy damage events are coalesced into one message per this many ms to spare the broker. */
+    damageFlushMs: 60,
+    keepaliveSec: 30,
+    connectTimeoutMs: 8000,
+    reconnectMs: 2000,
+};
+export const WORLD = {
+    width: 2400,
+    height: 1600,
+    gridSize: 80,
+};
+export const HORDE = {
+    /** Hard cap on simultaneous live enemies (requirement 3). */
+    maxEnemies: 100,
+    /** A room holds a squad of one to four. The fifth arrival is turned away. */
+    maxPlayers: 4,
+    /** Seconds between waves. */
+    waveIntervalSec: 14,
+    /** Grace period before the first wave of a fresh room. */
+    firstWaveDelaySec: 4,
+    baseWaveSize: 8,
+    waveGrowth: 3,
+    /** Enemies spawn at least this far from any player. */
+    minSpawnDistance: 520,
+};
+/**
+ * Difficulty scaling for a 1-4 player squad.
+ *
+ * Two independent dials, because they solve different problems. Squad *size*
+ * multiplies how many enemies spawn — four players clear a wave roughly four
+ * times faster, so a solo-tuned wave evaporates and nobody feels threatened.
+ * Squad *health* scaling is much gentler: raising enemy HP with headcount stops
+ * a full squad from deleting Trojan Tanks instantly, but pushed too far it
+ * punishes the group for grouping, which is the opposite of what a co-op game
+ * should reward.
+ *
+ * Both are applied per wave, from the live roster — so a player leaving
+ * mid-session eases the next wave rather than leaving four players' worth of
+ * malware chasing one survivor.
+ */
+export const DIFFICULTY = {
+    /** Extra wave size per additional player: 1.0x solo → 2.35x at four. */
+    sizePerPlayer: 0.45,
+    /** Extra enemy health per additional player: 1.0x solo → 1.36x at four. */
+    healthPerPlayer: 0.12,
+    /** Waves also grow harder over time, independent of headcount. */
+    healthPerWave: 0.09,
+    /** Solo play gets a small handicap so one player can hold a lane. */
+    soloHealthDiscount: 0.9,
+};
+export const AI = {
+    /**
+     * How far a decoy reaches, in world pixels per priority step above a player.
+     *
+     * Priority is applied as a *distance discount* rather than a multiplier. A
+     * multiplier is useless exactly when the ability matters: an enemy already
+     * standing on a player is 40px away, and no plausible multiplier makes a
+     * decoy 700px away look closer than that. Subtracting a flat attraction
+     * distance instead means a decoy reliably wins inside its radius and
+     * reliably loses outside it, which is both easier to reason about and easier
+     * to tune.
+     */
+    decoyPullPerPriority: 220,
+};
+export const RENDER = {
+    /**
+     * Peer-side interpolation strength. This is the fraction of the remaining
+     * distance closed in 1/60s; it is re-scaled per frame so the result is
+     * framerate independent. See `render/lerp.ts`.
+     */
+    enemyLerp: 0.22,
+    remotePlayerLerp: 0.28,
+    /** If a peer sprite is further than this from its target, snap instead of gliding. */
+    snapDistance: 420,
+};
+//# sourceMappingURL=config.js.map
