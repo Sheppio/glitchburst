@@ -144,7 +144,7 @@ await step('firing produces damage reports (attacker authority)', async () => {
     return {
       hud: Number(document.getElementById('hud-score').textContent),
       real: scene.score,
-      bullets: scene.bullets.length,
+      bullets: scene.bullets.size,
     };
   });
   return {
@@ -187,7 +187,7 @@ await step('broadcast rate survives a starved renderer', async () => {
 await step('killed enemies drop chips', async () => {
   const dropped = await page.evaluate(async () => {
     const scene = window.glitchburst.game.scene.getScene('game');
-    const before = scene.chips.filter((c) => c.active).length;
+    const before = scene.chips.items.filter((c) => c.active).length;
     const banked = scene.progress.totalChips;
 
     // Kill enemies well away from the player, or the magnet collects the chips
@@ -204,7 +204,7 @@ await step('killed enemies drop chips', async () => {
     await new Promise((r) => setTimeout(r, 500));
     return {
       before,
-      after: scene.chips.filter((c) => c.active).length,
+      after: scene.chips.items.filter((c) => c.active).length,
       killed: ids.length,
       collected: scene.progress.totalChips - banked,
     };
@@ -218,7 +218,7 @@ await step('killed enemies drop chips', async () => {
 await step('chips are drawn to the player and collected', async () => {
   const result = await page.evaluate(async () => {
     const scene = window.glitchburst.game.scene.getScene('game');
-    const chip = scene.chips.find((c) => c.active);
+    const chip = scene.chips.items.find((c) => c.active);
     if (!chip) return { ok: false, why: 'no chip on the floor' };
     // Drop one just outside the pickup radius but inside the magnet radius.
     chip.x = scene.me.x + 120;
@@ -324,7 +324,7 @@ await step('a full set of chips converts into a power-up', async () => {
     for (let i = 0; i < perSet - need; i++) scene.collectChip();
     await new Promise((r) => setTimeout(r, 300));
     return {
-      powerUps: scene.powerUps.filter((p) => p.active).length,
+      powerUps: scene.powerUps.items.filter((p) => p.active).length,
       chips: scene.progress.chips,
     };
   });
@@ -334,7 +334,7 @@ await step('a full set of chips converts into a power-up', async () => {
 await step('collecting a power-up upgrades the player', async () => {
   const out = await page.evaluate(async () => {
     const scene = window.glitchburst.game.scene.getScene('game');
-    const powerUp = scene.powerUps.find((p) => p.active);
+    const powerUp = scene.powerUps.items.find((p) => p.active);
     if (!powerUp) return { ok: false, why: 'no power-up present' };
     const before = { ...scene.progress.stacks };
     const dmg = scene.progress.damageMultiplier;

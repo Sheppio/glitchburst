@@ -149,8 +149,8 @@ await a.waitForTimeout(1500);
 const seen = await b.evaluate(() => {
   const scene = window.glitchburst.game.scene.getScene('game');
   return {
-    remote: scene.remoteBullets.filter((x) => x.active).length,
-    own: scene.bullets.filter((x) => x.active).length,
+    remote: scene.remoteBullets.items.filter((x) => x.active).length,
+    own: scene.bullets.items.filter((x) => x.active).length,
   };
 });
 check("a peer sees the host's bullets", seen.remote > 0,
@@ -159,7 +159,7 @@ check('and does not confuse them for its own', seen.own === 0);
 
 check('remote bullets are inert (attacker authority)', await b.evaluate(() => {
   const scene = window.glitchburst.game.scene.getScene('game');
-  return scene.remoteBullets.every((x) => x.damage === 0);
+  return scene.remoteBullets.items.every((x) => x.damage === 0);
 }), 'zero damage, never collide');
 
 check('shots are batched, not one message per pellet', await a.evaluate(() => {

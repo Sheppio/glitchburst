@@ -34,6 +34,7 @@ import type { AiTarget, ClassId, EnemyId, FieldEffect, PlayerId, PlayerState, Ve
 import { approachAngle, clamp, counterId, dist2, hashUnit, lerpAngle, segmentDist2 } from '../util.js';
 import { DAMAGE_RED, Fx } from './fx.js';
 import { glide, smoothing } from './lerp.js';
+import { Pool } from './pool.js';
 import { TEX } from './textures.js';
 
 export interface HudSnapshot {
@@ -210,8 +211,16 @@ export class GameScene extends Phaser.Scene {
   private enemies = new Map<EnemyId, EnemyView>();
   private remotes = new Map<PlayerId, RemotePlayer>();
   private fields = new Map<string, ActiveField>();
-  private bullets: Bullet[] = [];
-  private enemyBullets: EnemyBullet[] = [];
+  private bullets = new Pool<Bullet>(() => ({
+    sprite: this.add.image(0, 0, TEX.bullet).setDepth(25),
+    x: 0, y: 0, vx: 0, vy: 0, life: 0, damage: 0, pierce: 1, radius: 5, knockback: 0,
+    hit: new Set(), active: false,
+  }));
+
+  private enemyBullets = new Pool<EnemyBullet>(() => ({
+    sprite: this.add.image(0, 0, TEX.enemyBullet).setDepth(24).setTint(ENEMY_DEFS[EnemyKind.FirewallDrone].colour),
+    x: 0, y: 0, vx: 0, vy: 0, life: 0, damage: 0, active: false,
+  }));
   /**
    * Projectiles fired by *other* players.
    *
@@ -220,11 +229,21 @@ export class GameScene extends Phaser.Scene {
    * rounds connected. Rendering them is what makes a squad feel like a squad
    * rather than four people fighting invisible battles beside each other.
    */
-  private remoteBullets: EnemyBullet[] = [];
+  private remoteBullets = new Pool<EnemyBullet>(() => ({
+    sprite: this.add.image(0, 0, TEX.bullet).setDepth(24),
+    x: 0, y: 0, vx: 0, vy: 0, life: 0, damage: 0, active: false,
+  }));
   /** Shots fired locally since the last publish. */
   private outboundShots: ShotRecord[] = [];
-  private chips: Chip[] = [];
-  private powerUps: PowerUp[] = [];
+  private chips = new Pool<Chip>(() => ({
+    sprite: this.add.image(0, 0, TEX.chip).setDepth(12),
+    x: 0, y: 0, vx: 0, vy: 0, homing: false, speed: 0, ttl: 0, active: false,
+  }));
+
+  private powerUps = new Pool<PowerUp>(() => ({
+    sprite: this.add.image(0, 0, TEX.powerUp('damage')).setDepth(14),
+    upgrade: 'damage' as UpgradeId, x: 0, y: 0, ttl: 0, active: false,
+  }));
 
   /** This player's run progress. Never leaves the client. */
   private progress = new PlayerProgress();
@@ -429,7 +448,7 @@ export class GameScene extends Phaser.Scene {
 
     for (let n = 0; n < w.pellets; n++) {
       const a = w.pellets > 1 ? start + step * n : angle + (Math.random() - 0.5) * w.spread;
-      const bullet = this.takeBullet();
+      const bullet = this.bullets.acquire();
       // Spawn just inside the chassis, not at the barrel tip. An enemy pressed
       // against the player sits *closer* than the muzzle, so spawning at the
       // tip put the round past it — and since auto-aim targets the nearest
@@ -530,7 +549,7 @@ export class GameScene extends Phaser.Scene {
    * there is exactly one code path.
    */
   private updateBullets(dt: number): void {
-    for (const b of this.bullets) {
+    for (const b of this.bullets.items) {
       if (!b.active) continue;
 
       b.life -= dt;
@@ -635,7 +654,7 @@ export class GameScene extends Phaser.Scene {
 
   private updateEnemyBullets(dt: number): void {
     const reach = this.def.radius + 8;
-    for (const b of this.enemyBullets) {
+    for (const b of this.enemyBullets.items) {
       if (!b.active) continue;
 
       b.life -= dt;
@@ -1149,10 +1168,15 @@ export class GameScene extends Phaser.Scene {
    */
   private spawnChips(x: number, y: number, count: number, enemyId: EnemyId): void {
     const seed = enemyId.charCodeAt(enemyId.length - 1) + enemyId.length;
+    // Counted once, not per chip: this used to scan (and allocate) the whole
+    // pool for every chip in the drop, making a Trojan Tank's four-chip payout
+    // quadratic in pool size.
+    let room = PROGRESSION.maxChips - this.chips.countActive();
+
     for (let n = 0; n < count; n++) {
-      if (this.chips.filter((c) => c.active).length >= PROGRESSION.maxChips) return;
+      if (room-- <= 0) return;
       const angle = (((seed * 31 + n * 97) % 360) * Math.PI) / 180;
-      const chip = this.takeChip();
+      const chip = this.chips.acquire();
       chip.x = x;
       chip.y = y;
       // A small outward pop so a stack of four reads as four, not one.
@@ -1169,7 +1193,7 @@ export class GameScene extends Phaser.Scene {
   private updateChips(dt: number): void {
     const collectable = this.downedFor <= 0;
 
-    for (const chip of this.chips) {
+    for (const chip of this.chips.items) {
       if (!chip.active) continue;
 
       chip.ttl -= dt;
@@ -1259,7 +1283,7 @@ export class GameScene extends Phaser.Scene {
     const originX = fromKill ? atX : this.me.x + Math.cos(angle) * PROGRESSION.spawnRadius;
     const originY = fromKill ? atY : this.me.y + Math.sin(angle) * PROGRESSION.spawnRadius;
 
-    const powerUp = this.takePowerUp();
+    const powerUp = this.powerUps.acquire();
     powerUp.upgrade = upgrade;
     powerUp.x = clamp(originX, 40, WORLD.width - 40);
     powerUp.y = clamp(originY, 40, WORLD.height - 40);
@@ -1278,7 +1302,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private updatePowerUps(dt: number): void {
-    for (const powerUp of this.powerUps) {
+    for (const powerUp of this.powerUps.items) {
       if (!powerUp.active) continue;
 
       powerUp.ttl -= dt;
@@ -1332,7 +1356,7 @@ export class GameScene extends Phaser.Scene {
 
     for (let n = 0; n < w.pellets; n++) {
       const a = w.pellets > 1 ? start + step * n : shot.angle;
-      const bullet = this.takeRemoteBullet();
+      const bullet = this.remoteBullets.acquire();
       bullet.x = shot.x + Math.cos(shot.angle) * (def.radius * 0.5);
       bullet.y = shot.y + Math.sin(shot.angle) * (def.radius * 0.5);
       bullet.vx = Math.cos(a) * w.speed;
@@ -1357,7 +1381,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private updateRemoteBullets(dt: number): void {
-    for (const b of this.remoteBullets) {
+    for (const b of this.remoteBullets.items) {
       if (!b.active) continue;
       b.life -= dt;
       b.x += b.vx * dt;
@@ -1369,39 +1393,6 @@ export class GameScene extends Phaser.Scene {
       }
       b.sprite.setPosition(b.x, b.y);
     }
-  }
-
-  private takeRemoteBullet(): EnemyBullet {
-    const free = this.remoteBullets.find((b) => !b.active);
-    if (free) return free;
-    const bullet: EnemyBullet = {
-      sprite: this.add.image(0, 0, TEX.bullet).setDepth(24),
-      x: 0, y: 0, vx: 0, vy: 0, life: 0, damage: 0, active: false,
-    };
-    this.remoteBullets.push(bullet);
-    return bullet;
-  }
-
-  private takeChip(): Chip {
-    const free = this.chips.find((c) => !c.active);
-    if (free) return free;
-    const chip: Chip = {
-      sprite: this.add.image(0, 0, TEX.chip).setDepth(12),
-      x: 0, y: 0, vx: 0, vy: 0, homing: false, speed: 0, ttl: 0, active: false,
-    };
-    this.chips.push(chip);
-    return chip;
-  }
-
-  private takePowerUp(): PowerUp {
-    const free = this.powerUps.find((p) => !p.active);
-    if (free) return free;
-    const powerUp: PowerUp = {
-      sprite: this.add.image(0, 0, TEX.powerUp('damage')).setDepth(14),
-      upgrade: 'damage', x: 0, y: 0, ttl: 0, active: false,
-    };
-    this.powerUps.push(powerUp);
-    return powerUp;
   }
 
   /** Anything absent from the newest full snapshot no longer exists. */
@@ -1509,32 +1500,13 @@ export class GameScene extends Phaser.Scene {
 
   /* --------------------------------------------------------------- pooling */
 
-  private takeBullet(): Bullet {
-    const free = this.bullets.find((b) => !b.active);
-    if (free) return free;
-    const bullet: Bullet = {
-      sprite: this.add.image(0, 0, TEX.bullet).setDepth(25),
-      x: 0, y: 0, vx: 0, vy: 0, life: 0, damage: 0, pierce: 1, radius: 5, knockback: 0,
-      hit: new Set(), active: false,
-    };
-    this.bullets.push(bullet);
-    return bullet;
-  }
-
   private retireBullet(b: Bullet): void {
     b.active = false;
     b.sprite.setVisible(false);
   }
 
   private spawnEnemyBullet(x: number, y: number, vx: number, vy: number, damage: number): void {
-    let bullet = this.enemyBullets.find((b) => !b.active);
-    if (!bullet) {
-      bullet = {
-        sprite: this.add.image(0, 0, TEX.enemyBullet).setDepth(24).setTint(ENEMY_DEFS[EnemyKind.FirewallDrone].colour),
-        x: 0, y: 0, vx: 0, vy: 0, life: 0, damage: 0, active: false,
-      };
-      this.enemyBullets.push(bullet);
-    }
+    const bullet = this.enemyBullets.acquire();
     Object.assign(bullet, { x, y, vx, vy, damage, life: 3.2, active: true });
     bullet.sprite.setPosition(x, y).setVisible(true);
   }

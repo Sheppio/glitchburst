@@ -14,8 +14,15 @@ import { approachAngle, hashUnit } from '../dist/util.js';
 import { ENEMY_DEFS } from '../dist/sim/enemyTypes.js';
 import { pickTarget, targetScore, TARGETING } from '../dist/sim/targeting.js';
 import { CLASSES, CLASS_ORDER, classDps, weaponRange } from '../dist/sim/classes.js';
+import { Pool } from '../dist/render/pool.js';
 
 const { check, finish } = reporter('GLITCHBURST — simulation & codec');
+
+/** Assert inside a loop without emitting a line per iteration. */
+let onceFailures = 0;
+const check_once = (ok, label) => {
+  if (!ok && onceFailures++ === 0) check(label, false);
+};
 
 const targets = (n) =>
   Array.from({ length: n }, (_, i) => ({ id: `p${i}`, x: 1200 + i * 60, y: 800, priority: 1, alive: true }));
@@ -255,6 +262,45 @@ const run = (engine, seconds, t = targets(1)) => {
     ENEMY_DEFS[1].chipDrop > ENEMY_DEFS[0].chipDrop &&
     ENEMY_DEFS[2].powerUpChance > ENEMY_DEFS[1].powerUpChance,
     `chips ${ENEMY_DEFS[0].chipDrop}/${ENEMY_DEFS[1].chipDrop}/${ENEMY_DEFS[2].chipDrop}`);
+}
+
+/* ----------------------------------------------------------------- pool */
+
+{
+  let created = 0;
+  const pool = new Pool(() => ({ active: false, id: created++ }));
+
+  const a = pool.acquire();
+  a.active = true;
+  const b = pool.acquire();
+  b.active = true;
+  check('a pool creates slots on demand', pool.size === 2 && a !== b);
+
+  a.active = false;
+  const reused = pool.acquire();
+  check('a freed slot is reused rather than allocated', reused === a && pool.size === 2);
+
+  reused.active = true;
+  pool.acquire().active = true;
+  check('the pool grows only when everything is live', pool.size === 3);
+
+  check('an active slot is never handed out twice', new Set(pool.items.map((i) => i.id)).size === pool.size);
+  check('countActive counts only live slots', pool.countActive() === 3);
+
+  pool.items[1].active = false;
+  check('countActive tracks releases', pool.countActive() === 2);
+
+  // The rotating cursor must not miss a free slot that sits behind it.
+  const behind = pool.items[0];
+  behind.active = false;
+  for (let i = 0; i < 50; i++) {
+    const got = pool.acquire();
+    check_once(got.active === false, 'acquire never returns a live slot');
+    got.active = true;
+    got.active = false;
+  }
+  check('the rotating cursor still finds slots behind it', pool.size === 3,
+    `pool stayed at ${pool.size} across 50 acquisitions`);
 }
 
 /* ------------------------------------------------------------- class dps */

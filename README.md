@@ -36,7 +36,7 @@ Developing needs the compiler:
 ```bash
 npm install
 npm run watch      # tsc --watch, rebuilding dist/ on save
-npm test           # 141 tests: simulation, codec, single client, mobile, two clients
+npm test           # 148 tests: simulation, codec, single client, mobile, two clients
 ```
 
 `dist/` is committed on purpose — it is what GitHub Pages serves.
@@ -388,11 +388,11 @@ for a game — just don't build anything that needs privacy on top of it.
 npm test
 ```
 
-141 checks across four suites. The browser suites vendor Phaser locally and
+148 checks across four suites. The browser suites vendor Phaser locally and
 swap MQTT for a loopback stub that relays over `BroadcastChannel`, so two tabs
 share one "broker" and a real multi-client room can be tested offline.
 
-- **`sim.test.mjs`** (75) — codec round-trips, truncation tolerance, payload
+- **`sim.test.mjs`** (82) — codec round-trips, truncation tolerance, payload
   size at the cap, enemy cap, difficulty scaling, wave pacing, damage
   attribution, steering, decoy priority, host adoption, shockwave, progression
   and upgrade caps, deterministic drop rolls, turn-rate limiting, and the
