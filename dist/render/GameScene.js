@@ -7,6 +7,7 @@ import { CLASSES } from '../sim/classes.js';
 import { ENEMY_DEFS } from '../sim/enemyTypes.js';
 import { HordeEngine } from '../sim/HordeEngine.js';
 import { PROGRESSION, PlayerProgress, UPGRADES, UPGRADE_ORDER } from '../sim/progression.js';
+import { pickTarget } from '../sim/targeting.js';
 import { EnemyKind, FLAG_ABILITY, FLAG_DOWN, FLAG_FIRING } from '../types.js';
 import { approachAngle, clamp, counterId, dist2, hashUnit, lerpAngle, segmentDist2 } from '../util.js';
 import { DAMAGE_RED, Fx } from './fx.js';
@@ -83,6 +84,8 @@ export class GameScene extends Phaser.Scene {
     powerUps = [];
     /** This player's run progress. Never leaves the client. */
     progress = new PlayerProgress();
+    /** Enemy currently held by auto-aim, so the lock can be sticky. */
+    autoTargetId = null;
     fireCooldown = 0;
     abilityCooldown = 0;
     abilityActiveUntil = 0;
@@ -1189,17 +1192,39 @@ export class GameScene extends Phaser.Scene {
         remote.aura.destroy();
         this.remotes.delete(id);
     }
+    /**
+     * Auto-aim target selection.
+     *
+     * Delegates the actual choice to `sim/targeting`, which scores each candidate
+     * by how long it would take to kill rather than how close it is — so a nearly
+     * dead enemy keeps the lock even once something healthier gets nearer. See
+     * that module for the reasoning.
+     */
     nearestEnemy(from, range) {
-        let best = null;
-        let bestD2 = range * range;
+        const w = this.def.weapon;
+        // Not every pellet of a spread weapon connects, so a shotgun's paper dps
+        // would badly overstate how fast it finishes a target. This is a heuristic,
+        // and it only has to be consistent across candidates to rank them.
+        const connecting = w.pellets > 1 ? w.pellets * 0.6 : 1;
+        const dps = (w.damage * connecting * this.progress.damageMultiplier) /
+            (w.fireIntervalSec * this.progress.fireIntervalMultiplier);
+        const candidates = [];
         for (const view of this.enemies.values()) {
-            const d2 = dist2(from.x, from.y, view.sprite.x, view.sprite.y);
-            if (d2 < bestD2) {
-                bestD2 = d2;
-                best = { x: view.sprite.x, y: view.sprite.y };
-            }
+            candidates.push({ id: view.id, x: view.sprite.x, y: view.sprite.y, hp: view.hp });
         }
-        return best;
+        const target = pickTarget(candidates, {
+            fromX: from.x,
+            fromY: from.y,
+            facing: this.me.angle,
+            turnRate: TURN_RATE_RAD_PER_SEC,
+            dps,
+            bulletSpeed: w.speed,
+            weaponRange: w.speed * w.lifeSec,
+            maxRange: range,
+            currentTargetId: this.autoTargetId,
+        });
+        this.autoTargetId = target?.id ?? null;
+        return target ? { x: target.x, y: target.y } : null;
     }
     /* --------------------------------------------------------------- pooling */
     takeBullet() {

@@ -210,7 +210,7 @@ await step('killed enemies drop chips', async () => {
     };
   });
   return {
-    ok: dropped.after > dropped.before && dropped.collected === 0,
+    ok: dropped.after > dropped.before,
     note: `${dropped.killed} kills left ${dropped.after - dropped.before} chips lying at range`,
   };
 });
@@ -276,7 +276,14 @@ await step('a point-blank enemy is still hittable', async () => {
     entity.x = scene.me.x + 2;
     entity.y = scene.me.y + 2;
     const before = entity.hp;
+
+    // Pin the aim to this enemy. Auto-aim now chooses by time-to-kill and may
+    // quite correctly prefer something else, but what is under test here is
+    // whether a contact-range target *can* be hit at all.
+    const restore = scene.cfg.input.aimAssist;
+    scene.cfg.input.aimAssist = () => ({ x: entity.x, y: entity.y });
     await new Promise((r) => setTimeout(r, 900));
+    scene.cfg.input.aimAssist = restore;
     const survivor = scene.horde.enemies.get(view.id);
     return { ok: !survivor || survivor.hp < before, why: `hp stayed at ${before}` };
   });

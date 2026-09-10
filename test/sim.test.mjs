@@ -12,6 +12,7 @@ import { HORDE, PLAYER, TURN_RATE_RAD_PER_SEC } from '../dist/config.js';
 import { PlayerProgress, PROGRESSION, UPGRADES } from '../dist/sim/progression.js';
 import { approachAngle, hashUnit } from '../dist/util.js';
 import { ENEMY_DEFS } from '../dist/sim/enemyTypes.js';
+import { pickTarget, targetScore, TARGETING } from '../dist/sim/targeting.js';
 
 const { check, finish } = reporter('GLITCHBURST — simulation & codec');
 
@@ -253,6 +254,76 @@ const run = (engine, seconds, t = targets(1)) => {
     ENEMY_DEFS[1].chipDrop > ENEMY_DEFS[0].chipDrop &&
     ENEMY_DEFS[2].powerUpChance > ENEMY_DEFS[1].powerUpChance,
     `chips ${ENEMY_DEFS[0].chipDrop}/${ENEMY_DEFS[1].chipDrop}/${ENEMY_DEFS[2].chipDrop}`);
+}
+
+/* -------------------------------------------------------------- auto-aim */
+
+const aimCtx = (over = {}) => ({
+  fromX: 0, fromY: 0, facing: 0,
+  turnRate: 25, dps: 100, bulletSpeed: 1000,
+  weaponRange: 700, maxRange: 620, currentTargetId: null,
+  ...over,
+});
+
+{
+  // The headline behaviour: a nearly dead enemy further away beats a healthy
+  // one that is closer, because finishing it is genuinely faster.
+  const dying = { id: 'dying', x: 300, y: 0, hp: 3 };
+  const healthy = { id: 'healthy', x: 90, y: 0, hp: 260 };
+  const pick = pickTarget([healthy, dying], aimCtx());
+  check('a nearly dead enemy outranks a closer healthy one', pick.id === 'dying',
+    `chose ${pick.id}`);
+
+  // ...but not at any distance. Push it far enough and the close one wins.
+  const distant = { id: 'dying', x: 600, y: 0, hp: 3 };
+  const near = pickTarget([healthy, distant], aimCtx({ weaponRange: 200, bulletSpeed: 400 }));
+  check('but distance still wins once the shot is wasted', near.id === 'healthy',
+    `chose ${near.id} when the dying one is out of weapon range`);
+}
+
+{
+  // Equal health: pure distance, as before.
+  const a = { id: 'a', x: 100, y: 0, hp: 50 };
+  const b = { id: 'b', x: 200, y: 0, hp: 50 };
+  check('with equal health it still picks the nearest', pickTarget([b, a], aimCtx()).id === 'a');
+}
+
+{
+  // Stickiness: a marginally better rival must not steal the lock.
+  const held = { id: 'held', x: 100, y: 0, hp: 40 };
+  const rival = { id: 'rival', x: 96, y: 0, hp: 39 };
+  const ctx = aimCtx({ currentTargetId: 'held' });
+  check('a marginally better rival does not steal the lock',
+    pickTarget([held, rival], ctx).id === 'held');
+
+  // ...but a decisively better one does.
+  const finisher = { id: 'finisher', x: 110, y: 0, hp: 1 };
+  check('a decisively better target takes it immediately',
+    pickTarget([held, finisher], ctx).id === 'finisher');
+}
+
+{
+  // Turning cost is real now that the chassis has a turn rate: something
+  // directly behind is more expensive than the same target in front.
+  const front = { id: 'front', x: 200, y: 0, hp: 60 };
+  const behind = { id: 'behind', x: -200, y: 0, hp: 60 };
+  const ctx = aimCtx();
+  check('a target behind you costs more to acquire',
+    targetScore(behind, ctx) > targetScore(front, ctx),
+    `${targetScore(behind, ctx).toFixed(3)}s vs ${targetScore(front, ctx).toFixed(3)}s`);
+}
+
+{
+  check('nothing beyond acquisition range is considered',
+    pickTarget([{ id: 'far', x: 5000, y: 0, hp: 1 }], aimCtx()) === null);
+  check('an empty field yields no target', pickTarget([], aimCtx()) === null);
+  check('a zero-dps weapon cannot divide by zero',
+    Number.isFinite(targetScore({ id: 'x', x: 10, y: 0, hp: 10 }, aimCtx({ dps: 0 }))));
+  check('the sticky discount is applied to the held target only',
+    Math.abs(
+      targetScore({ id: 'k', x: 100, y: 0, hp: 50 }, aimCtx({ currentTargetId: 'k' })) -
+      targetScore({ id: 'k', x: 100, y: 0, hp: 50 }, aimCtx()) * TARGETING.stickyDiscount,
+    ) < 1e-9);
 }
 
 /* ------------------------------------------------------------ turn rate */
