@@ -1,6 +1,6 @@
 {
   "name": "glitchburst",
-  "version": "0.2.26",
+  "version": "0.2.27",
   "private": true,
   "description": "Serverless co-op top-down horde shooter over MQTT/WebSockets. Distributed-host P2P architecture.",
   "type": "module",

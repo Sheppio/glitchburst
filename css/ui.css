@@ -811,6 +811,33 @@ body.console-platform .console-banner { display: flex; }
 .ability-state { display: block; font-size: 10px; letter-spacing: 0.12em; color: var(--ink-faint); margin-top: 3px; }
 .ability.ready .ability-state { color: var(--cyan); }
 
+/* Damage tell: a hard red frame, flashed and gone.
+   Width is 2.5% of the *smaller* screen dimension rather than of the width, so
+   the frame is an even ring instead of thick down the sides and thin across the
+   top — which on a 21:9 monitor is a very visible difference. */
+.damage-edge {
+  position: absolute;
+  inset: 0;
+  border: min(2.5vw, 2.5vh) solid #ff2d3a;
+  /* Never in the way of the controls it sits over. */
+  pointer-events: none;
+  opacity: 0;
+  z-index: 30;
+}
+
+.damage-edge.hit {
+  animation: damage-edge 0.26s ease-out;
+}
+
+@keyframes damage-edge {
+  0% { opacity: 0.85; }
+  100% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .damage-edge.hit { animation-duration: 0.12s; }
+}
+
 .hud-actions {
   position: absolute;
   bottom: var(--pad-bottom);

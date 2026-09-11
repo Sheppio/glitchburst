@@ -1,6 +1,6 @@
 # GLITCHBURST
 
-<!-- version -->**v0.2.26**<!-- /version --> — the build currently on Pages.
+<!-- version -->**v0.2.27**<!-- /version --> — the build currently on Pages.
 
 A co-op top-down horde shooter that runs entirely in the browser. **No game server.**
 Every client talks to a public MQTT broker over WebSockets, and one of them
@@ -38,7 +38,7 @@ Developing needs the compiler:
 ```bash
 npm install
 npm run watch      # tsc --watch, rebuilding dist/ on save
-npm test           # 382 tests: simulation, codec, single client, mobile, controller, two clients
+npm test           # 383 tests: simulation, codec, single client, mobile, controller, two clients
 ```
 
 `dist/` is committed on purpose — it is what GitHub Pages serves.
@@ -438,7 +438,16 @@ carrying up to a hundred of them.
 
 ### Knowing you are in trouble
 
-Health is a number in the corner of a screen whose middle is where you are
+Being hit and being *about to die* are different facts and were drawn the same
+way. A hit fired `cameras.flash` — the whole playfield tinted red for 90ms —
+which at any real rate of incoming fire is most of the time, and which hid the
+arena behind the thing that was hurting you at the moment you most needed to see
+it. A hit now flashes a **hard red frame** at the screen edge instead, 2.5% of
+the smaller screen dimension so the ring is even rather than thick down the
+sides of a wide monitor, and the playfield stays clear.
+
+That leaves the full-screen red for the one thing worth colouring a whole screen
+over. Health is a number in the corner of a screen whose middle is where you are
 actually looking, which is a poor place for the one fact that decides whether
 you should be backing off. Below 30% the frame itself says so: a red wash at the
 screen edge, breathing rather than steady, because a static red border stops
@@ -977,7 +986,7 @@ for a game — just don't build anything that needs privacy on top of it.
 npm test
 ```
 
-382 checks across five suites. The browser suites vendor Phaser locally and
+383 checks across five suites. The browser suites vendor Phaser locally and
 swap MQTT for a loopback stub that relays over `BroadcastChannel`, so two tabs
 share one "broker" and a real multi-client room can be tested offline.
 
@@ -988,7 +997,7 @@ share one "broker" and a real multi-client room can be tested offline.
   scoring formula, enemy levels and their health/reward curves, wave streaming
   and the tempo floor, the autopilot's steering bands and its survival against a
   live horde, and the audio volume curve.
-- **`smoke.test.mjs`** (50) — menus, settings persistence and migration, Phaser
+- **`smoke.test.mjs`** (51) — menus, settings persistence and migration, Phaser
   boot, election, 20 Hz batching, attacker-authority kills, point-blank hits,
   chip pickup and conversion, turn rate, abilities, pause, settings over a live
   match, and broadcast rate under a starved renderer.

@@ -95,6 +95,8 @@ export interface GameSceneInit {
   /** How much of the viewport the HUD covers, so the camera can scroll clear of it. */
   hudInsets: () => { top: number; bottom: number };
   onBanner: (text: string, sub?: string) => void;
+  /** The local player was hit. Drawn by the HUD, which owns the screen edge. */
+  onDamage: () => void;
 }
 
 /** Quantisation of the enrage tell: sixteen steps across the whole curve. */
@@ -987,7 +989,13 @@ export class GameScene extends Phaser.Scene {
     this.cfg.sfx.hurt();
     this.fx.damageNumber(this.me.x, this.me.y - 26, amount);
     this.cameras.main.shake(120, 0.006);
-    this.cameras.main.flash(90, 255, 60, 120, false);
+    // A frame, not a full-screen flash. `cameras.flash` tinted the entire
+    // playfield red for 90ms on every hit, which at any real rate of incoming
+    // fire is most of the time — and it hid the arena behind the thing that was
+    // hurting you, at the moment you most needed to see it. The red wash is now
+    // reserved for the one thing worth colouring the whole screen over, which
+    // is being about to die.
+    this.cfg.onDamage();
 
     // Requirement: rumble when the local player takes damage.
     this.cfg.input.triggerRumble(HAPTIC.damage.weak, HAPTIC.damage.strong, HAPTIC.damage.ms);

@@ -1217,38 +1217,120 @@ await step('a reboot never puts you back inside the swarm', async () => {
   };
 });
 
+await step('a hit frames the screen instead of filling it', async () => {
+  const out = await page.evaluate(async () => {
+    const scene = window.glitchburst.game.scene.getScene('game');
+    const edge = document.getElementById('damage-edge');
+    const frame = () => new Promise((r) => requestAnimationFrame(r));
+
+    clearInterval(window.__keepAlive);
+    scene.downedFor = 0;
+    scene.gameOver = false;
+    scene.me.hp = scene.me.maxHp;
+    edge.classList.remove('hit');
+    await frame();
+
+    const idle = getComputedStyle(edge).opacity;
+    scene.takeDamage(4);
+    // Read before yielding: `flash()` marks the effect running synchronously,
+    // and by the next frame a 90ms one may already have finished — which would
+    // make this pass whether the flash was removed or not.
+    const cameraFlash = scene.cameras.main.flashEffect.isRunning;
+    await frame();
+    const hit = {
+      classed: edge.classList.contains('hit'),
+      opacity: Number(getComputedStyle(edge).opacity),
+      // The whole-screen flash this replaces. Phaser reports it directly, so
+      // "no longer tints the playfield" is a fact rather than an impression.
+      cameraFlash,
+      // Must never swallow a click meant for the controls underneath it.
+      clickThrough: getComputedStyle(edge).pointerEvents === 'none',
+    };
+
+    // A CSS animation does not restart on an element that already carries the
+    // class, so under sustained fire every hit after the first would be
+    // invisible — exactly backwards.
+    // Polled rather than timed. The animation is 260ms of wall clock, but in
+    // this deliberately starved renderer it may not *start* until a frame or
+    // two after the class lands — so a fixed wait measures the machine, not the
+    // animation. What matters is that it does end.
+    let faded = 1;
+    for (let i = 0; i < 40 && faded > 0.05; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+      faded = Number(getComputedStyle(edge).opacity);
+    }
+    scene.takeDamage(4);
+    await frame();
+    const again = Number(getComputedStyle(edge).opacity);
+
+    // 2.5% of the *smaller* dimension, so the ring is even rather than thick
+    // down the sides of a wide monitor.
+    const width = parseFloat(getComputedStyle(edge).borderTopWidth);
+    const expected = Math.min(window.innerWidth, window.innerHeight) * 0.025;
+
+    scene.me.hp = scene.me.maxHp;
+    window.__keepAlive = setInterval(() => { scene.me.hp = scene.me.maxHp; }, 100);
+    return { idle: Number(idle), hit, faded, again, width, expected };
+  });
+
+  const ok =
+    out.idle === 0 &&
+    out.hit.classed && out.hit.opacity > 0.2 &&
+    out.hit.cameraFlash === false &&
+    out.hit.clickThrough &&
+    out.faded < 0.05 &&
+    out.again > 0.2 &&
+    Math.abs(out.width - out.expected) < 1.5;
+
+  return {
+    ok,
+    note: `idle ${out.idle}, hit ${out.hit.opacity.toFixed(2)} → ${out.faded.toFixed(2)}, ` +
+      `second hit ${out.again.toFixed(2)}, border ${out.width}px (wanted ${out.expected.toFixed(0)}), ` +
+      `camera flash ${out.hit.cameraFlash ? 'STILL FIRING' : 'gone'}`,
+  };
+});
+
 await step('bleeding out is visible from the middle of the screen', async () => {
   const out = await page.evaluate(async () => {
     const scene = window.glitchburst.game.scene.getScene('game');
     clearInterval(window.__keepAlive);
     const frame = () => new Promise((r) => requestAnimationFrame(r));
 
-    const read = () => scene.dangerVignette.alpha;
+    // Peak over a window, not a single sample. The wash pulses, so comparing
+    // two instants compares two phases of the pulse as much as two health
+    // levels — which is a coin toss dressed up as an assertion.
+    const peak = async (frames = 26) => {
+      let highest = 0;
+      let lowest = 1;
+      for (let i = 0; i < frames; i++) {
+        await frame();
+        highest = Math.max(highest, scene.dangerVignette.alpha);
+        lowest = Math.min(lowest, scene.dangerVignette.alpha);
+      }
+      return { highest, swing: highest - lowest };
+    };
 
     scene.downedFor = 0;
     scene.gameOver = false;
     scene.me.hp = scene.me.maxHp;
     await frame(); await frame();
-    const healthy = read();
+    const healthy = (await peak(4)).highest;
 
     scene.me.hp = scene.me.maxHp * 0.25;
-    await frame(); await frame();
-    const hurt = read();
+    const quarter = await peak();
+    const hurt = quarter.highest;
 
     // Breathing, not steady: a static red frame stops being read after a few
     // seconds, and the whole point is that it keeps being read.
-    const samples = [];
-    for (let i = 0; i < 24; i++) { await frame(); samples.push(read()); }
-    const pulses = Math.max(...samples) - Math.min(...samples) > 0.01;
+    const pulses = quarter.swing > 0.01;
 
     scene.me.hp = 1;
-    await frame(); await frame();
-    const dying = read();
+    const dying = (await peak()).highest;
 
     // Nothing to warn about once the run is over.
     scene.downedFor = 3;
     await frame(); await frame();
-    const downed = read();
+    const downed = scene.dangerVignette.alpha;
 
     scene.downedFor = 0;
     scene.me.hp = scene.me.maxHp;

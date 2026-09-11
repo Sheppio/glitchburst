@@ -524,6 +524,20 @@ export class UI {
             return row;
         }));
     }
+    /**
+     * Flash the damage frame.
+     *
+     * The class is stripped and re-added with a forced reflow between, because a
+     * CSS animation on an element that already carries the class does not
+     * restart — and under sustained fire every hit after the first would then be
+     * invisible, which is exactly backwards. Same trick the banner uses.
+     */
+    damageFlash() {
+        const edge = this.el('damage-edge');
+        edge.classList.remove('hit');
+        void edge.offsetWidth;
+        edge.classList.add('hit');
+    }
     banner(text, sub) {
         const el = this.el('hud-banner');
         this.text('hud-banner-text', text);
