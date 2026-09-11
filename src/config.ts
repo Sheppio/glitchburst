@@ -262,6 +262,33 @@ export const AI = {
   decoyPullPerPriority: 220,
 } as const;
 
+/**
+ * The low-health warning at the screen edge.
+ *
+ * Health is a number in the corner of a screen whose middle is where you are
+ * actually looking, which is a poor place to put the one fact that decides
+ * whether you should be backing off. On the way to dying the frame itself says
+ * so, and the alarm underneath it pulses faster as it gets worse.
+ */
+export const DANGER = {
+  /** Health fraction below which the warning starts. */
+  threshold: 0.3,
+  /** Steady component of the wash at the very edge of death. */
+  baseAlpha: 0.1,
+  /** How much more the pulse adds on top. */
+  pulseAlpha: 0.15,
+  /**
+   * Strength at the threshold, as a fraction of full.
+   *
+   * Without a floor the wash scales linearly from nothing, which means the
+   * first third of the danger band is invisible on a deliberately bright arena
+   * — measured at a fifth of full health it was reaching alpha 0.14 against a
+   * near-white background, which is not a warning. It arrives already legible
+   * and then gets worse.
+   */
+  onset: 0.42,
+} as const;
+
 export const RENDER = {
   /**
    * Peer-side interpolation strength. This is the fraction of the remaining

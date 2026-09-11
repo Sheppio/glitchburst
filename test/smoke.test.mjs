@@ -1217,6 +1217,55 @@ await step('a reboot never puts you back inside the swarm', async () => {
   };
 });
 
+await step('bleeding out is visible from the middle of the screen', async () => {
+  const out = await page.evaluate(async () => {
+    const scene = window.glitchburst.game.scene.getScene('game');
+    clearInterval(window.__keepAlive);
+    const frame = () => new Promise((r) => requestAnimationFrame(r));
+
+    const read = () => scene.dangerVignette.alpha;
+
+    scene.downedFor = 0;
+    scene.gameOver = false;
+    scene.me.hp = scene.me.maxHp;
+    await frame(); await frame();
+    const healthy = read();
+
+    scene.me.hp = scene.me.maxHp * 0.25;
+    await frame(); await frame();
+    const hurt = read();
+
+    // Breathing, not steady: a static red frame stops being read after a few
+    // seconds, and the whole point is that it keeps being read.
+    const samples = [];
+    for (let i = 0; i < 24; i++) { await frame(); samples.push(read()); }
+    const pulses = Math.max(...samples) - Math.min(...samples) > 0.01;
+
+    scene.me.hp = 1;
+    await frame(); await frame();
+    const dying = read();
+
+    // Nothing to warn about once the run is over.
+    scene.downedFor = 3;
+    await frame(); await frame();
+    const downed = read();
+
+    scene.downedFor = 0;
+    scene.me.hp = scene.me.maxHp;
+    await frame();
+    window.__keepAlive = setInterval(() => { scene.me.hp = scene.me.maxHp; }, 100);
+    return { healthy, hurt, dying, downed, pulses };
+  });
+
+  return {
+    ok: out.healthy === 0 && out.hurt > 0 && out.dying > out.hurt &&
+      out.downed === 0 && out.pulses,
+    note: `alpha ${out.healthy} healthy → ${out.hurt.toFixed(2)} at a quarter → ` +
+      `${out.dying.toFixed(2)} at one hit left, ${out.pulses ? 'pulsing' : 'STATIC'}, ` +
+      `${out.downed} while down`,
+  };
+});
+
 await step('audio starts after a gesture and mutes on demand', async () => {
   const out = await page.evaluate(async () => {
     const { audio, music, sfx } = window.glitchburst;
@@ -1225,11 +1274,30 @@ await step('audio starts after a gesture and mutes on demand', async () => {
 
     // Every effect must survive being called; audio is a garnish and must never
     // be able to take a frame down.
+    //
+    // Enumerated off the prototype rather than listed by hand. The hand-written
+    // list was a standing invitation to add an effect and quietly not test it,
+    // which is the same trap the power-up test fell into — and calling each one
+    // with no arguments at all is the stronger check anyway, since "never
+    // throws" is the actual contract.
+    const effects = Object.getOwnPropertyNames(Object.getPrototypeOf(sfx))
+      .filter((name) => name !== 'constructor' && typeof sfx[name] === 'function');
+
     let threw = null;
+    const covered = [];
+    for (const name of effects) {
+      try {
+        sfx[name]();
+        covered.push(name);
+      } catch (e) { threw = `${name}: ${e}`; }
+    }
+    // ...and again with arguments that actually mean something, so the branches
+    // a bare call skips are exercised too.
     try {
-      sfx.shoot('overclocker'); sfx.hit(); sfx.kill(true); sfx.hurt();
-      sfx.ability(); sfx.chip(0.5); sfx.powerUp(); sfx.wave(); sfx.click();
-    } catch (e) { threw = String(e); }
+      sfx.shoot('overclocker'); sfx.shoot('fireman'); sfx.shoot('glitcher');
+      sfx.kill(true); sfx.kill(false); sfx.chip(0.5);
+      sfx.alarm(0.28); sfx.alarm(0.02); sfx.toggle(true);
+    } catch (e) { threw = threw ?? `argument form: ${e}`; }
 
     const gainOf = (ch) => audio.destination(ch)?.gain.value ?? null;
     const before = { sfx: gainOf('sfx'), music: gainOf('music') };
@@ -1240,14 +1308,17 @@ await step('audio starts after a gesture and mutes on demand', async () => {
     audio.setVolume('sfx', 1);
     audio.setVolume('music', 1);
 
-    return { state: audio.context?.state ?? 'none', threw, before, mutedSfx: muted.sfx, playing: music.isPlaying };
+    return {
+      state: audio.context?.state ?? 'none', threw, before, covered,
+      mutedSfx: muted.sfx, playing: music.isPlaying,
+    };
   });
 
   return {
-    ok: out.threw === null && out.mutedSfx === null,
+    ok: out.threw === null && out.mutedSfx === null && out.covered.length >= 15,
     note: out.threw
       ? `effect threw: ${out.threw}`
-      : `context ${out.state}, muting detaches the channel, music playing: ${out.playing}`,
+      : `${out.covered.length} effects called, context ${out.state}, muting detaches the channel, music playing: ${out.playing}`,
   };
 });
 

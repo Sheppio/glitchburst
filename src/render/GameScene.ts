@@ -1,5 +1,5 @@
 import * as Phaser from 'phaser';
-import { HORDE, LIVES, NET, PLAYER, RENDER, TURN_RATE_RAD_PER_SEC, WORLD, ZOOM } from '../config.js';
+import { DANGER, HORDE, LIVES, NET, PLAYER, RENDER, TURN_RATE_RAD_PER_SEC, WORLD, ZOOM } from '../config.js';
 import { HAPTIC } from '../input/settings.js';
 import type { InputManager } from '../input/InputManager.js';
 import type { SettingsStore } from '../input/settings.js';
@@ -99,6 +99,8 @@ export interface GameSceneInit {
 
 /** Quantisation of the enrage tell: sixteen steps across the whole curve. */
 const HEAT_STEPS = 16;
+/** The step at which the warning growl fires — a quarter of the way up. */
+const HEAT_WARN = 4;
 
 /** Sprite scale for a given enrage step. Shared so the hit flash lands on it too. */
 const heatScale = (step: number): number =>
@@ -288,6 +290,8 @@ export class GameScene extends Phaser.Scene {
    * has to be converted back every frame.
    */
   private vignette: Phaser.GameObjects.Image | null = null;
+  /** Red wash at the screen edge, driven by how close to dead the player is. */
+  private dangerVignette: Phaser.GameObjects.Image | null = null;
   /** Last applied bounds, so the slow re-measure only touches the camera on a change. */
   private boundsSignature = '';
   private markers = new Pool<{ sprite: Phaser.GameObjects.Image; active: boolean }>(() => ({
@@ -523,6 +527,10 @@ export class GameScene extends Phaser.Scene {
     // Read pause input first: it is the one control that must keep working
     // while everything else is frozen.
     this.pollPauseInput();
+    // Outside the frozen check below: the wash has to be *cleared* on a pause or
+    // a wipe, not merely stop being updated, or it hangs over the card at
+    // whatever alpha the last live frame happened to leave it at.
+    this.showDanger();
     // A finished run is frozen, not merely veiled. Left running, the horde
     // carried on swarming an empty arena behind the summary the squad is
     // trying to read — and on the host it kept simulating and broadcasting a
@@ -1089,6 +1097,7 @@ export class GameScene extends Phaser.Scene {
     this.cfg.room.running = false;
     // Get this client's final numbers out before the summary is read.
     this.publishStatsNow();
+    this.cfg.sfx.gameOver();
     this.cfg.onBanner(
       'SYSTEM FAILURE',
       this.cfg.room.squadSize > 1 ? 'The squad was wiped out' : 'No reboots remaining',
@@ -1237,6 +1246,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private respawn(): void {
+    this.cfg.sfx.reboot();
     // Full health. A partial reboot straight back into the wave that killed you
     // tends to mean dying again immediately, which spends a life on nothing.
     this.me.maxHp = this.progression.progress.maxHealth;
@@ -1482,13 +1492,20 @@ export class GameScene extends Phaser.Scene {
   private showHeat(view: EnemyView, age: number): void {
     const step = Math.round(enrageProgress(age) * HEAT_STEPS);
     if (step === view.heat) return;
+    // Announced on the way up only, and from the same place the tell is drawn
+    // so the two can never disagree about what is happening. The sound
+    // throttles itself hard, which is what turns a whole wave crossing the
+    // threshold together into one growl rather than ninety.
+    if (view.heat >= 0 && step > view.heat && step === HEAT_WARN) this.cfg.sfx.enrage();
     view.heat = step;
 
     const heat = step / HEAT_STEPS;
-    // White leaves the texture alone; lerping the green and blue channels down
-    // from there warms it without touching the reds it already has.
+    // White leaves the texture alone; pulling the blue channel down hard and
+    // the green much less warms it toward *orange* rather than pink. The
+    // difference matters: the low-health wash at the screen edge is red, and
+    // two different red signals on one screen is one signal too many.
     view.sprite.setTint(
-      (255 << 16) | (Math.round(255 - heat * 96) << 8) | Math.round(255 - heat * 120),
+      (255 << 16) | (Math.round(255 - heat * 70) << 8) | Math.round(255 - heat * 165),
     );
     view.sprite.setScale(heatScale(step));
   }
@@ -1796,6 +1813,7 @@ export class GameScene extends Phaser.Scene {
 
     for (const marker of this.markers.items) marker.sprite.setScale(1 / zoom);
     this.vignette?.setDisplaySize(cam.width / zoom, cam.height / zoom);
+    this.dangerVignette?.setDisplaySize(cam.width / zoom, cam.height / zoom);
 
     // The bounds are expressed in world units, so a zoom change resizes them.
     this.boundsSignature = '';
@@ -2092,6 +2110,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   private spawnEnemyBullet(x: number, y: number, vx: number, vy: number, damage: number): void {
+    // Incoming fire used to be the one thing that could hurt you silently.
+    this.cfg.sfx.enemyShot();
     const bullet = this.enemyBullets.acquire();
     Object.assign(bullet, { x, y, vx, vy, damage, life: 3.2, maxLife: 3.2, active: true });
     bullet.sprite.setPosition(x, y).setAlpha(1).setVisible(true);
@@ -2180,7 +2200,49 @@ export class GameScene extends Phaser.Scene {
       .setDepth(150)
       .setDisplaySize(cam.width, cam.height);
 
+    // The same texture again, red and normally invisible. Health is a number in
+    // the corner of a screen whose middle is where you are looking; on the way
+    // to dying, the frame itself should be what tells you.
+    this.dangerVignette = this.add
+      .image(cam.width / 2, cam.height / 2, TEX.danger)
+      .setScrollFactor(0)
+      .setDepth(151)
+      .setTint(0xff2d3a)
+      .setAlpha(0)
+      .setDisplaySize(cam.width, cam.height);
+
     this.scale.on('resize', () => this.applyZoom());
+  }
+
+  /**
+   * Paint the danger wash, and pulse the alarm underneath it.
+   *
+   * Both are driven from health rather than from the moment of being hit, so
+   * standing at one hit from death is as loud as being hit was — bleeding out
+   * quietly while a wave chews on you was the thing worth fixing.
+   */
+  private showDanger(): void {
+    const wash = this.dangerVignette;
+    if (!wash) return;
+
+    const ratio = this.me.maxHp > 0 ? clamp(this.me.hp / this.me.maxHp, 0, 1) : 1;
+    if (this.downedFor > 0 || this.gameOver || this.paused) {
+      if (wash.alpha !== 0) wash.setAlpha(0);
+      return;
+    }
+
+    if (ratio > DANGER.threshold) {
+      if (wash.alpha !== 0) wash.setAlpha(0);
+      return;
+    }
+
+    // Breathing rather than steady: a static red frame stops being read after a
+    // few seconds, and the whole point is that it keeps being read.
+    const urgency = 1 - ratio / DANGER.threshold;
+    const strength = DANGER.onset + (1 - DANGER.onset) * urgency;
+    const pulse = 0.5 + 0.5 * Math.sin((this.time.now / 1000) * (4 + urgency * 5));
+    wash.setAlpha((DANGER.baseAlpha + DANGER.pulseAlpha * pulse) * strength);
+    this.cfg.sfx.alarm(ratio);
   }
 
   private buildArena(): void {

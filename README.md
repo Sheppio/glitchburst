@@ -1,6 +1,6 @@
 # GLITCHBURST
 
-<!-- version -->**v0.2.25**<!-- /version --> — the build currently on Pages.
+<!-- version -->**v0.2.26**<!-- /version --> — the build currently on Pages.
 
 A co-op top-down horde shooter that runs entirely in the browser. **No game server.**
 Every client talks to a public MQTT broker over WebSockets, and one of them
@@ -38,7 +38,7 @@ Developing needs the compiler:
 ```bash
 npm install
 npm run watch      # tsc --watch, rebuilding dist/ on save
-npm test           # 381 tests: simulation, codec, single client, mobile, controller, two clients
+npm test           # 382 tests: simulation, codec, single client, mobile, controller, two clients
 ```
 
 `dist/` is committed on purpose — it is what GitHub Pages serves.
@@ -425,12 +425,47 @@ circling kiter hard, 27% of the final twenty seconds in contact. That is more
 pressure than the problem deserves: the complaint is a stalemate that never ends,
 not one that ends slowly.
 
-Enraged enemies wash warm and grow about 12%. The wash is deliberately not a red
-multiply, which would flood the level pip at the centre of every enemy — and that
-pip is the only thing telling a player which of two identical drones is the
-dangerous one. The tell is derived locally from when a client first saw the
-enemy rather than being put on the wire, so it costs nothing in a 20 Hz snapshot
+Enraged enemies wash warm and grow about 12%, and the field growls once as a
+wave crosses the threshold — once, not ninety times, because they age together
+and the sound throttles itself. The wash is deliberately not a red multiply,
+which would flood the level pip at the centre of every enemy — and that pip is
+the only thing telling a player which of two identical drones is the dangerous
+one. It leans orange rather than pink for a second reason: the low-health
+warning below is red, and two different red signals on one screen is one signal
+too many. The tell is derived locally from when a client first saw the enemy
+rather than being put on the wire, so it costs nothing in a 20 Hz snapshot
 carrying up to a hundred of them.
+
+### Knowing you are in trouble
+
+Health is a number in the corner of a screen whose middle is where you are
+actually looking, which is a poor place for the one fact that decides whether
+you should be backing off. Below 30% the frame itself says so: a red wash at the
+screen edge, breathing rather than steady, because a static red border stops
+being read after a few seconds and the whole point is that it keeps being read.
+Underneath it an alarm pulses, and **the interval is the information** — it
+roughly doubles in rate between a quarter health and nearly dead, so how much
+trouble you are in is audible without reading anything.
+
+Reusing the existing vignette texture for this was the obvious move and it does
+not work. That one is tuned to be almost imperceptible — stacked rings at 0.02
+alpha each — because its job is to stop a uniformly bright rectangle reading as
+flat. Tinted red and faded in, it reached an effective alpha of about 0.015
+against a near-white arena, which is to say nothing at all. The warning gets its
+own texture, drawn as a canvas radial gradient rather than stacked rings,
+because the falloff *is* the effect: rings band, and their alpha is hard to
+predict where they overlap.
+
+The first version that was actually visible then went too far and flooded the
+whole frame pink, which drowned the enemies. What ships is a rim with a clear
+centre — the player is in there and has to stay readable.
+
+Two other things that could hurt you made no sound at all. **Incoming drone fire
+was silent**, so a shot from off screen was a health bar dropping for no
+announced reason, which reads as the game cheating rather than as a shot you
+missed; it now chirps *upward*, where every weapon in the player's hands falls,
+so it never registers as your own gun. And a **reboot** had no answer to the
+death sound that preceded it.
 
 Damage being endless is the answer to "I reach fully optimised too soon": there
 is no such state to reach. Once the four bounded lines are full every power-up
@@ -942,7 +977,7 @@ for a game — just don't build anything that needs privacy on top of it.
 npm test
 ```
 
-381 checks across five suites. The browser suites vendor Phaser locally and
+382 checks across five suites. The browser suites vendor Phaser locally and
 swap MQTT for a loopback stub that relays over `BroadcastChannel`, so two tabs
 share one "broker" and a real multi-client room can be tested offline.
 
@@ -953,7 +988,7 @@ share one "broker" and a real multi-client room can be tested offline.
   scoring formula, enemy levels and their health/reward curves, wave streaming
   and the tempo floor, the autopilot's steering bands and its survival against a
   live horde, and the audio volume curve.
-- **`smoke.test.mjs`** (49) — menus, settings persistence and migration, Phaser
+- **`smoke.test.mjs`** (50) — menus, settings persistence and migration, Phaser
   boot, election, 20 Hz batching, attacker-authority kills, point-blank hits,
   chip pickup and conversion, turn rate, abilities, pause, settings over a live
   match, and broadcast rate under a starved renderer.

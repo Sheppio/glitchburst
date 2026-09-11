@@ -123,6 +123,35 @@ export class Sfx {
             gain: big ? 0.2 : 0.12,
         });
     }
+    /**
+     * A drone firing at you.
+     *
+     * Incoming fire was the one thing in the game that could hurt you and make no
+     * sound at all — a drone shooting from off screen was a health bar dropping
+     * for no announced reason, which reads as the game cheating rather than as a
+     * shot you missed. Deliberately unlike any weapon in the player's hands: a
+     * short rising chirp where every player weapon falls, so it never registers
+     * as your own gun.
+     */
+    enemyShot() {
+        if (!this.bus.throttle('enemyShot', 0.07))
+            return;
+        this.tone({ freq: 300, endFreq: 640, duration: 0.08, type: 'square', gain: 0.07 });
+    }
+    /**
+     * Something that has been chasing you long enough to speed up.
+     *
+     * One warning for a wave rather than one per enemy: they age together, so the
+     * throttle is long enough that a field crossing the threshold at once is a
+     * single growl. Low and slow, against a palette that is otherwise short and
+     * bright.
+     */
+    enrage() {
+        if (!this.bus.throttle('enrage', 4))
+            return;
+        this.tone({ freq: 150, endFreq: 92, duration: 0.7, type: 'sawtooth', gain: 0.16 });
+        this.tone({ freq: 74, endFreq: 46, duration: 0.85, type: 'square', gain: 0.1, delay: 0.06 });
+    }
     /* -------------------------------------------------------------- player */
     hurt() {
         if (!this.bus.throttle('hurt', 0.16))
@@ -133,6 +162,42 @@ export class Sfx {
     died() {
         this.tone({ freq: 420, endFreq: 50, duration: 0.9, type: 'sawtooth', gain: 0.3 });
         this.tone({ freq: 210, endFreq: 40, duration: 1.1, type: 'square', gain: 0.16, delay: 0.05 });
+    }
+    /**
+     * Low health, pulsed while it lasts.
+     *
+     * Called every frame and rate-limited from the inside, because the interval
+     * *is* the information: the pulse doubles in rate between a quarter health
+     * and nearly dead, so how much trouble you are in is audible without reading
+     * a number. Above the threshold it is silent and costs nothing.
+     *
+     * @param ratio current health as a fraction of maximum.
+     */
+    alarm(ratio) {
+        if (!Number.isFinite(ratio) || ratio > 0.3 || ratio <= 0)
+            return;
+        // 0.92s of quiet at the threshold, 0.42s at the edge of death.
+        const urgency = 1 - ratio / 0.3;
+        if (!this.bus.throttle('alarm', 0.92 - urgency * 0.5))
+            return;
+        this.tone({ freq: 210, endFreq: 150, duration: 0.1, type: 'triangle', gain: 0.1 + urgency * 0.07 });
+    }
+    /** Back on your feet. The short answer to `died`, and the only other riser. */
+    reboot() {
+        this.tone({ freq: 180, endFreq: 720, duration: 0.34, type: 'triangle', gain: 0.2 });
+        this.tone({ freq: 270, endFreq: 1080, duration: 0.3, type: 'square', gain: 0.08, delay: 0.04 });
+    }
+    /**
+     * The run is over.
+     *
+     * Longer and lower than `died`, which it follows immediately — a death you
+     * come back from and a death you do not have to be distinguishable in the
+     * half second before the card appears.
+     */
+    gameOver() {
+        this.tone({ freq: 300, endFreq: 34, duration: 1.6, type: 'sawtooth', gain: 0.26 });
+        this.tone({ freq: 150, endFreq: 28, duration: 1.9, type: 'square', gain: 0.14, delay: 0.12 });
+        this.noise({ duration: 1.2, freq: 220, gain: 0.12, type: 'lowpass' });
     }
     ability() {
         // Rising pair: the one sound in the game that goes *up*, so an ability

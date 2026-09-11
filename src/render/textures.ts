@@ -23,6 +23,7 @@ export const TEX = {
   powerUp: (id: string) => `tex-powerup-${id}`,
   grid: 'tex-grid',
   vignette: 'tex-vignette',
+  danger: 'tex-danger',
   marker: 'tex-marker',
 } as const;
 
@@ -47,6 +48,7 @@ export function createTextures(scene: Phaser.Scene): void {
   drawShadow(scene);
   drawSpark(scene);
   drawVignette(scene);
+  drawDanger(scene);
   for (const id of UPGRADE_ORDER) drawPowerUp(scene, UPGRADES[id]);
 
   // Every class in every player colour: 32 small textures. The colour is baked
@@ -667,4 +669,41 @@ function drawVignette(scene: Phaser.Scene): void {
 
   g.generateTexture(TEX.vignette, size, size);
   g.destroy();
+}
+
+/**
+ * The low-health wash: the same shape as the vignette, with real opacity.
+ *
+ * Reusing the vignette texture was the obvious move and it does not work. That
+ * one is tuned to be almost imperceptible — stacked rings at 0.02 alpha each,
+ * a few hundredths in total — because its job is to stop a uniformly bright
+ * rectangle reading as flat. Tinting it red and fading it in produced an
+ * effective alpha of about 0.015 against a near-white arena, which is to say
+ * nothing at all. A warning has to be seen.
+ *
+ * Drawn as a canvas radial gradient rather than as stacked rings, because the
+ * falloff here is the whole effect: rings give banding and an alpha that is
+ * hard to predict where they overlap, and a gradient gives exactly the curve
+ * asked for. White, so the sprite's tint decides the colour.
+ */
+function drawDanger(scene: Phaser.Scene): void {
+  const size = 256;
+  const c = size / 2;
+
+  // A stale key from an earlier scene would make `createCanvas` return null.
+  if (scene.textures.exists(TEX.danger)) scene.textures.remove(TEX.danger);
+  const texture = scene.textures.createCanvas(TEX.danger, size, size);
+  const ctx = texture?.getContext();
+  if (!texture || !ctx) return;
+
+  // Clear through the middle — the player is in there and must stay readable —
+  // and opaque by the corners. The outer stop sits inside the corner distance,
+  // so the corners take the final colour rather than fading back out.
+  const gradient = ctx.createRadialGradient(c, c, c * 0.62, c, c, c * 1.04);
+  gradient.addColorStop(0, 'rgba(255,255,255,0)');
+  gradient.addColorStop(0.45, 'rgba(255,255,255,0.1)');
+  gradient.addColorStop(1, 'rgba(255,255,255,0.95)');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, size, size);
+  texture.refresh();
 }
