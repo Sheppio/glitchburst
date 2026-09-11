@@ -1,6 +1,6 @@
 # GLITCHBURST
 
-<!-- version -->**v0.2.12**<!-- /version --> — the build currently on Pages.
+<!-- version -->**v0.2.13**<!-- /version --> — the build currently on Pages.
 
 A co-op top-down horde shooter that runs entirely in the browser. **No game server.**
 Every client talks to a public MQTT broker over WebSockets, and one of them
@@ -38,7 +38,7 @@ Developing needs the compiler:
 ```bash
 npm install
 npm run watch      # tsc --watch, rebuilding dist/ on save
-npm test           # 229 tests: simulation, codec, single client, mobile, two clients
+npm test           # 242 tests: simulation, codec, single client, mobile, two clients
 ```
 
 `dist/` is committed on purpose — it is what GitHub Pages serves.
@@ -497,6 +497,46 @@ controller mid-run just works.
 Both default **on** for touch devices, which reduces the mobile scheme to a
 single movement stick.
 
+### Auto-move (self-driving client)
+
+A third toggle, **Auto-move**, hands movement to the game as well. With all
+three on the client plays hands-off.
+
+It exists for testing the multiplayer half. Rooms need bodies in them, and a
+second tab that stands still is a poor stand-in for a player: it never leaves
+its spawn ring, never collects a chip, never earns a power-up and never reboots
+— so precisely the wire traffic worth testing is the traffic it does not
+generate. Left alone for two minutes a self-driving client reaches wave 8, banks
+200-odd chips, takes seven upgrades and spends its reboots.
+
+The policy lives in `sim/autopilot.ts`, pure and headlessly testable. Three
+bands, chosen by the distance to the nearest hostile:
+
+| | Behaviour |
+| --- | --- |
+| **Crowded** (< 240px) | find a way out |
+| **Out of range** (> 75% of weapon reach) | close in, so waves actually get cleared |
+| **In between** | go and collect chips |
+
+The first band is the interesting one. Summing repulsion vectors is the obvious
+approach and it fails exactly when it matters: surrounded, the pushes cancel,
+the sum collapses to nothing, and the bot stands still in the middle of the
+swarm. Measured, that was **half** of a 90-second run spent in contact range.
+
+So under real pressure it stops averaging and starts choosing — sample sixteen
+headings, look ahead along each, take the one that ends up furthest from
+everything. That walks out through the gap in an encirclement instead of
+pressing into the middle of it, and it drops contact time to **14%** for a bot
+with no weapon at all. The score is scaled by how far each step actually gets
+after clamping to the arena, which is what stops the bot picking a heading
+straight into a wall: cornering itself is the other classic way a retreating bot
+dies.
+
+Real input always wins — any stick or key deflection overrides the autopilot
+that frame, so a human can take a self-driving client back without first
+visiting the settings screen. The toggle is also on the in-game HUD, beside
+auto-aim and auto-fire.
+
 ### Console & handheld
 
 Tuned for Xbox Edge, the PlayStation browser and the Steam Deck:
@@ -549,17 +589,18 @@ for a game — just don't build anything that needs privacy on top of it.
 npm test
 ```
 
-229 checks across four suites. The browser suites vendor Phaser locally and
+242 checks across four suites. The browser suites vendor Phaser locally and
 swap MQTT for a loopback stub that relays over `BroadcastChannel`, so two tabs
 share one "broker" and a real multi-client room can be tested offline.
 
-- **`sim.test.mjs`** (143) — codec round-trips, truncation tolerance, payload
+- **`sim.test.mjs`** (155) — codec round-trips, truncation tolerance, payload
   size at the cap, enemy cap, difficulty scaling, wave pacing, damage
   attribution, steering, decoy priority, host adoption, shockwave, progression
   and upgrade caps, deterministic drop rolls, turn-rate limiting, the auto-aim
   scoring formula, enemy levels and their health/reward curves, wave streaming
-  and the tempo floor, and the audio volume curve.
-- **`smoke.test.mjs`** (39) — menus, settings persistence and migration, Phaser
+  and the tempo floor, the autopilot's steering bands and its survival against a
+  live horde, and the audio volume curve.
+- **`smoke.test.mjs`** (40) — menus, settings persistence and migration, Phaser
   boot, election, 20 Hz batching, attacker-authority kills, point-blank hits,
   chip pickup and conversion, turn rate, abilities, pause, settings over a live
   match, and broadcast rate under a starved renderer.

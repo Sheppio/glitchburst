@@ -283,6 +283,79 @@ await step('every enemy kind has a texture at every level', async () => {
   };
 });
 
+await step('auto-move drives the client with no input at all', async () => {
+  const out = await page.evaluate(async () => {
+    const scene = window.glitchburst.game.scene.getScene('game');
+    const { settings } = window.glitchburst;
+
+    const before = { autoMove: settings.current.autoMove };
+
+    // Park the player well off-centre first. This step runs before the horde
+    // has spawned, and with nothing to fight or collect the autopilot drifts to
+    // the middle of the arena and then deliberately stops — so starting near
+    // the centre measures nothing and fails about one run in three.
+    scene.me.x = 400;
+    scene.me.y = 400;
+
+    // Measured as a difference over the same wall-clock window rather than as a
+    // raw pixel count: distance per frame depends on the frame rate, and this
+    // suite deliberately runs the renderer starved.
+    const travelFor = async (ms) => {
+      const from = { x: scene.me.x, y: scene.me.y };
+      let total = 0;
+      let last = from;
+      const until = performance.now() + ms;
+      while (performance.now() < until) {
+        await new Promise((r) => requestAnimationFrame(r));
+        total += Math.hypot(scene.me.x - last.x, scene.me.y - last.y);
+        last = { x: scene.me.x, y: scene.me.y };
+      }
+      return total;
+    };
+
+    settings.set('autoMove', false);
+    const parkedTravel = await travelFor(900);
+
+    settings.set('autoMove', true);
+    const start = { x: scene.me.x, y: scene.me.y };
+    const travelled = await travelFor(900);
+    const enemies = scene.enemies.size;
+
+    // Real input has to win, or a human cannot take a self-driving client back
+    // without first going to the settings screen.
+    scene.cfg.input.moveAssist = () => ({ x: 1, y: 0, ability: false });
+    const held = { x: scene.me.x, y: scene.me.y };
+    await new Promise((r) => requestAnimationFrame(r));
+    await new Promise((r) => requestAnimationFrame(r));
+    const drivenRight = scene.me.x > held.x;
+
+    settings.set('autoMove', before.autoMove);
+    const parked = { x: scene.me.x, y: scene.me.y };
+    for (let i = 0; i < 10; i++) await new Promise((r) => requestAnimationFrame(r));
+    const stillAfterOff = Math.hypot(scene.me.x - parked.x, scene.me.y - parked.y);
+
+    return {
+      travelled,
+      parkedTravel,
+      enemies,
+      net: Math.hypot(scene.me.x - start.x, scene.me.y - start.y),
+      drivenRight,
+      stillAfterOff,
+      finite: Number.isFinite(scene.me.x) && Number.isFinite(scene.me.y),
+    };
+  });
+
+  return {
+    ok:
+      out.parkedTravel < 1 &&
+      out.travelled > 20 &&
+      out.drivenRight &&
+      out.stillAfterOff < 2 &&
+      out.finite,
+    note: `${out.parkedTravel.toFixed(0)}px parked → ${out.travelled.toFixed(0)}px self-driving over the same window (${out.enemies} hostiles), ${out.stillAfterOff.toFixed(1)}px once off`,
+  };
+});
+
 await step('client wins election and becomes host', async () => {
   await page.waitForFunction(() => window.glitchburst?.room?.isHost === true, null, { timeout: 6000 });
   const host = await page.textContent('#hud-host');

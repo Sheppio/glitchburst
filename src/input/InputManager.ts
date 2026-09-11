@@ -14,6 +14,16 @@ export interface InputEvents extends Record<string, unknown> {
 export type AimAssist = (from: Vec2, range: number) => Vec2 | null;
 
 /**
+ * Supplied by the game: one frame of self-driving.
+ *
+ * The scene decides, because the decision needs the world — where the enemies
+ * are, where the chips are, whether the ability is off cooldown. Same shape as
+ * `AimAssist` and for the same reason: `input/` stays a device abstraction and
+ * does not learn about the game.
+ */
+export type MoveAssist = () => { x: number; y: number; ability: boolean };
+
+/**
  * The abstraction layer every other system reads.
  *
  * Three devices go in; one `Intent` comes out. Nothing downstream of this class
@@ -33,6 +43,8 @@ export class InputManager {
 
   /** Set by the game scene once enemies exist. */
   aimAssist: AimAssist | null = null;
+  /** Set by the game scene. Drives the character when `autoMove` is on. */
+  moveAssist: MoveAssist | null = null;
 
   private sources: InputSource[];
   private lastActive = new Map<SchemeId, number>();
@@ -136,12 +148,27 @@ export class InputManager {
     // requirement to hold a button.
     const firing = sample.firing || settings.autoFire;
 
-    const abilityPressed = sample.ability && !this.abilityWasDown;
-    this.abilityWasDown = sample.ability;
+    // --- Autopilot --------------------------------------------------------
+    // Takes the character over completely, so a client can play itself. Real
+    // input still wins: any stick or key deflection this frame overrides it,
+    // which means a human can grab a self-driving client without first going
+    // to the settings screen.
+    let { moveX, moveY } = sample;
+    let autoAbility = false;
+
+    if (settings.autoMove && this.moveAssist && Math.hypot(moveX, moveY) < 0.05) {
+      const drive = this.moveAssist();
+      moveX = drive.x;
+      moveY = drive.y;
+      autoAbility = drive.ability;
+    }
+
+    const abilityDown = sample.ability || autoAbility;
+    const abilityPressed = abilityDown && !this.abilityWasDown;
+    this.abilityWasDown = abilityDown;
 
     // Clamp the movement vector: diagonal keyboard input would otherwise be
     // 1.41x faster than cardinal.
-    let { moveX, moveY } = sample;
     const mag = Math.hypot(moveX, moveY);
     if (mag > 1) {
       moveX /= mag;

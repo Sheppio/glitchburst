@@ -22,6 +22,8 @@ export class InputManager {
     touch;
     /** Set by the game scene once enemies exist. */
     aimAssist = null;
+    /** Set by the game scene. Drives the character when `autoMove` is on. */
+    moveAssist = null;
     sources;
     lastActive = new Map();
     scheme = 'kbm';
@@ -113,11 +115,24 @@ export class InputManager {
         // The weapon's own cooldown still governs the rate; this only removes the
         // requirement to hold a button.
         const firing = sample.firing || settings.autoFire;
-        const abilityPressed = sample.ability && !this.abilityWasDown;
-        this.abilityWasDown = sample.ability;
+        // --- Autopilot --------------------------------------------------------
+        // Takes the character over completely, so a client can play itself. Real
+        // input still wins: any stick or key deflection this frame overrides it,
+        // which means a human can grab a self-driving client without first going
+        // to the settings screen.
+        let { moveX, moveY } = sample;
+        let autoAbility = false;
+        if (settings.autoMove && this.moveAssist && Math.hypot(moveX, moveY) < 0.05) {
+            const drive = this.moveAssist();
+            moveX = drive.x;
+            moveY = drive.y;
+            autoAbility = drive.ability;
+        }
+        const abilityDown = sample.ability || autoAbility;
+        const abilityPressed = abilityDown && !this.abilityWasDown;
+        this.abilityWasDown = abilityDown;
         // Clamp the movement vector: diagonal keyboard input would otherwise be
         // 1.41x faster than cardinal.
-        let { moveX, moveY } = sample;
         const mag = Math.hypot(moveX, moveY);
         if (mag > 1) {
             moveX /= mag;

@@ -17,6 +17,7 @@ import {
   levelRewardScale, MAX_LEVEL, rollLevel,
 } from '../dist/sim/enemyLevels.js';
 import { pickTarget, targetScore, TARGETING } from '../dist/sim/targeting.js';
+import { autopilotMove, AUTOPILOT } from '../dist/sim/autopilot.js';
 import { CLASSES, CLASS_ORDER, classDps, weaponRange } from '../dist/sim/classes.js';
 import { Pool } from '../dist/render/pool.js';
 import { fadeOut } from '../dist/render/lerp.js';
@@ -347,6 +348,114 @@ const run = (engine, seconds, t = targets(1)) => {
     .map((l) => fadeOut(l, 0.3))
     .every((v, i, a) => i === 0 || v <= a[i - 1]));
   check('a zero lifetime cannot divide by zero', fadeOut(1, 0) === 1);
+}
+
+/* ------------------------------------------------------------- autopilot */
+
+{
+  const world = { width: 2400, height: 1600 };
+  const drive = (over) =>
+    autopilotMove({ x: 1200, y: 800, enemies: [], chips: [], weaponRange: 600, world, ...over });
+
+  const unit = (v) => Math.abs(Math.hypot(v.x, v.y) - 1) < 1e-6;
+  const towards = (v, tx, ty, from = { x: 1200, y: 800 }) =>
+    v.x * (tx - from.x) + v.y * (ty - from.y) > 0;
+
+  // Backing off is the whole survival strategy.
+  const crowded = drive({ enemies: [{ x: 1260, y: 800 }] });
+  check('the bot backs away from something on top of it',
+    unit(crowded) && crowded.x < -0.5, `heading (${crowded.x.toFixed(2)}, ${crowded.y.toFixed(2)})`);
+
+  // Summed, not nearest-only: fleeing the closest of a crowd walks into the
+  // rest of it, which at the enemy cap is most of them.
+  const pincered = drive({ enemies: [{ x: 1300, y: 800 }, { x: 1290, y: 830 }, { x: 1295, y: 770 }] });
+  check('a crowd is escaped as a crowd, not one enemy at a time',
+    pincered.x < -0.7, `heading (${pincered.x.toFixed(2)}, ${pincered.y.toFixed(2)})`);
+
+  // ...but it has to actually fight, or the wave never clears and the room
+  // under test never advances.
+  const distant = drive({ enemies: [{ x: 2000, y: 800 }] });
+  check('the bot closes in when the fight is out of range',
+    towards(distant, 2000, 800), `heading (${distant.x.toFixed(2)}, ${distant.y.toFixed(2)})`);
+
+  const inRange = drive({ enemies: [{ x: 1200 + 600 * 0.5, y: 800 }] });
+  check('an enemy already inside weapon range is not chased',
+    !towards(inRange, 1900, 800));
+
+  // Chips are the progression path; a bot that ignores them never earns a
+  // power-up and never exercises that half of the game.
+  const loot = drive({ chips: [{ x: 1200, y: 1100 }] });
+  check('the bot goes and collects chips', towards(loot, 1200, 1100) && unit(loot));
+
+  const lootUnderFire = drive({ enemies: [{ x: 1240, y: 800 }], chips: [{ x: 1400, y: 800 }] });
+  check('but not while something is on top of it', lootUnderFire.x < 0,
+    'retreat wins over the chip behind the enemy');
+
+  // Cornering itself is how a retreating bot dies.
+  const corner = autopilotMove({
+    x: 80, y: 80, enemies: [{ x: 300, y: 300 }], chips: [], weaponRange: 600, world,
+  });
+  check('the bot steers off the walls rather than cornering itself',
+    corner.x > 0 || corner.y > 0, `heading (${corner.x.toFixed(2)}, ${corner.y.toFixed(2)})`);
+
+  // Idle behaviour: an empty arena between waves.
+  const idle = autopilotMove({ x: 200, y: 200, enemies: [], chips: [], weaponRange: 600, world });
+  check('with nothing to do it drifts to the middle',
+    towards(idle, 1200, 800, { x: 200, y: 200 }) && unit(idle));
+  const middle = autopilotMove({ x: 1200, y: 800, enemies: [], chips: [], weaponRange: 600, world });
+  check('and stops once it gets there', middle.x === 0 && middle.y === 0);
+
+  // Every branch must produce a usable vector — a NaN here would propagate
+  // straight into the player position, which this codebase has done before.
+  const hostile = [
+    { enemies: [{ x: 1200, y: 800 }], chips: [{ x: 1200, y: 800 }] },
+    { enemies: [], chips: [{ x: 1200, y: 800 }] },
+    { enemies: [{ x: 1200, y: 800 }] },
+    { x: 0, y: 0, enemies: [{ x: 0, y: 0 }] },
+    { weaponRange: 0, enemies: [{ x: 1500, y: 800 }] },
+  ];
+  check('no input produces a NaN heading',
+    hostile.every((o) => {
+      const v = drive(o);
+      return Number.isFinite(v.x) && Number.isFinite(v.y) && Math.hypot(v.x, v.y) <= 1.0001;
+    }));
+}
+
+{
+  // The bot has to survive a real horde, not just point the right way. Run the
+  // engine with an autopilot-driven player and check it is not simply eaten.
+  const engine = new HordeEngine();
+  const world = { width: 2400, height: 1600 };
+  let me = { x: 1200, y: 800 };
+  const speed = 290;
+  const dt = 1 / 60;
+  let contacts = 0;
+
+  for (let i = 0; i < 90 * 60; i++) {
+    const enemies = [...engine.enemies.values()].map((e) => ({ x: e.x, y: e.y }));
+    const move = autopilotMove({ x: me.x, y: me.y, enemies, chips: [], weaponRange: 600, world });
+    me = {
+      x: Math.max(24, Math.min(world.width - 24, me.x + move.x * speed * dt)),
+      y: Math.max(24, Math.min(world.height - 24, me.y + move.y * speed * dt)),
+    };
+    engine.step(dt, [{ id: 'bot', x: me.x, y: me.y, priority: 1, alive: true }]);
+
+    // Count frames spent in contact range — the bot cannot kill anything in
+    // this harness, so being touched sometimes is expected; living inside the
+    // swarm is not.
+    for (const e of engine.enemies.values()) {
+      if (Math.hypot(e.x - me.x, e.y - me.y) < 40) { contacts++; break; }
+    }
+  }
+
+  const share = contacts / (90 * 60);
+  // Summed repulsion scored 50% here, because it cancels out under
+  // encirclement. The escape-sampling policy is what brought it down.
+  check('an unarmed bot kites a live horde rather than standing in it',
+    share < 0.2, `${(share * 100).toFixed(0)}% of 90s spent in contact range with no weapon`);
+  check('the bot stays inside the arena',
+    me.x > 0 && me.x < world.width && me.y > 0 && me.y < world.height,
+    `ended at (${me.x.toFixed(0)}, ${me.y.toFixed(0)}) against ${engine.enemyCount} live`);
 }
 
 /* --------------------------------------------------------- enemy levels */

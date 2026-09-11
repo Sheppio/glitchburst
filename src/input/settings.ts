@@ -5,6 +5,11 @@ export interface InputSettings {
   autoFire: boolean;
   /** Snap the weapon angle to the nearest live enemy on screen (requirement 1d). */
   autoAim: boolean;
+  /**
+   * Let the client drive itself. With auto-fire and auto-aim it plays hands-off,
+   * which is how a second body gets into a room for multiplayer testing.
+   */
+  autoMove: boolean;
   /** Auto-aim only considers enemies inside this world-space radius. */
   autoAimRange: number;
   /**
@@ -36,6 +41,7 @@ const STORAGE_KEY = 'glitchburst.input.v1';
 export const DEFAULT_SETTINGS: InputSettings = {
   autoFire: false,
   autoAim: false,
+  autoMove: false,
   autoAimRange: 620,
   deadzone: 0.15,
   forceTouchControls: false,
@@ -76,7 +82,7 @@ export class SettingsStore {
     this.events.emit('change', { settings: this.state });
   }
 
-  toggle(key: 'autoFire' | 'autoAim' | 'forceTouchControls' | 'southpaw' | 'vibration'): void {
+  toggle(key: 'autoFire' | 'autoAim' | 'autoMove' | 'forceTouchControls' | 'southpaw' | 'vibration'): void {
     this.set(key, !this.state[key]);
   }
 }

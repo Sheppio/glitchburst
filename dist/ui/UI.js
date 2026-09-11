@@ -42,6 +42,11 @@ const TOGGLES = [
         detail: 'The weapon angle tracks the nearest live enemy in range. Manual aim returns when nothing is near.',
     },
     {
+        key: 'autoMove',
+        title: 'Auto-move',
+        detail: 'The client drives itself — backs off when crowded, closes in when out of range, collects chips. With auto-aim and auto-fire it plays hands-off, which is how you get a second body into a room to test multiplayer. Any real input takes over instantly.',
+    },
+    {
         key: 'forceTouchControls',
         title: 'On-screen sticks',
         detail: 'Show the virtual joysticks and ability button. On by default for touch devices.',
@@ -237,6 +242,7 @@ export class UI {
         }
         this.el('chip-autoaim').setAttribute('aria-pressed', String(this.settings.current.autoAim));
         this.el('chip-autofire').setAttribute('aria-pressed', String(this.settings.current.autoFire));
+        this.el('chip-automove').setAttribute('aria-pressed', String(this.settings.current.autoMove));
         this.renderSquad(s.squad);
     }
     /** Stack counts per upgrade. Dimmed until the player owns at least one. */
@@ -469,6 +475,7 @@ export class UI {
         this.on('btn-resume', () => this.callbacks.onTogglePause());
         this.on('chip-autoaim', () => this.settings.toggle('autoAim'));
         this.on('chip-autofire', () => this.settings.toggle('autoFire'));
+        this.on('chip-automove', () => this.settings.toggle('autoMove'));
         this.on('btn-join', () => {
             const code = this.input('input-room').value.trim().toUpperCase();
             if (code.length < 3) {

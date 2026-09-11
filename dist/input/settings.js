@@ -10,6 +10,7 @@ const STORAGE_KEY = 'glitchburst.input.v1';
 export const DEFAULT_SETTINGS = {
     autoFire: false,
     autoAim: false,
+    autoMove: false,
     autoAimRange: 620,
     deadzone: 0.15,
     forceTouchControls: false,

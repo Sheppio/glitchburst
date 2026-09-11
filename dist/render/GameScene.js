@@ -9,6 +9,7 @@ import { clampLevel } from '../sim/enemyLevels.js';
 import { HordeEngine } from '../sim/HordeEngine.js';
 import { UPGRADES, UPGRADE_ORDER } from '../sim/progression.js';
 import { pickTarget } from '../sim/targeting.js';
+import { autopilotMove } from '../sim/autopilot.js';
 import { EnemyKind, FLAG_ABILITY, FLAG_DOWN, FLAG_FIRING } from '../types.js';
 import { approachAngle, clamp, counterId, dist2, lerpAngle, segmentDist2 } from '../util.js';
 import { DAMAGE_RED, Fx } from './fx.js';
@@ -199,6 +200,8 @@ export class GameScene extends Phaser.Scene {
         // Auto-aim asks the scene for a target; the scene is the only thing that
         // knows where the enemies are.
         input.aimAssist = (from, range) => this.nearestEnemy(from, range);
+        // Autopilot asks the scene for a direction, for the same reason.
+        input.moveAssist = () => this.autopilot();
         this.wireNetwork();
         room.hostStatsProvider = () => ({
             enemyCount: this.horde?.enemyCount ?? this.enemies.size,
@@ -664,6 +667,42 @@ export class GameScene extends Phaser.Scene {
         // Nothing in range is genuinely clear — a hundred enemies cover a lot of
         // arena. Come back at the roomiest spot found rather than where you fell.
         return best;
+    }
+    /**
+     * One frame of self-driving, for the `autoMove` setting.
+     *
+     * The scene's job here is only to describe what it can see; the policy lives
+     * in `sim/autopilot.ts`, where it is pure and testable without a browser.
+     *
+     * Enemy positions come off the sprites rather than the simulation so a peer,
+     * which has no `HordeEngine`, drives on exactly what it can see — the same
+     * choice made for reboot relocation.
+     */
+    autopilot() {
+        const enemies = [];
+        for (const view of this.enemies.values()) {
+            enemies.push({ x: view.sprite.x, y: view.sprite.y });
+        }
+        const chips = [];
+        for (const chip of this.progression.chips.items) {
+            if (chip.active)
+                chips.push({ x: chip.x, y: chip.y });
+        }
+        const w = this.def.weapon;
+        const move = autopilotMove({
+            x: this.me.x,
+            y: this.me.y,
+            enemies,
+            chips,
+            weaponRange: w.speed * w.lifeSec,
+            world: { width: WORLD.width, height: WORLD.height },
+        });
+        // Spend the ability the moment it is up and something is in reach. A bot
+        // that hoards its cooldown never exercises the ability wire path, which is
+        // half of what a test client is for.
+        const ability = this.abilityCooldown <= 0 &&
+            enemies.some((e) => dist2(e.x, e.y, this.me.x, this.me.y) < 420 * 420);
+        return { x: move.x, y: move.y, ability };
     }
     respawn() {
         // Full health. A partial reboot straight back into the wave that killed you
@@ -1365,6 +1404,7 @@ export class GameScene extends Phaser.Scene {
             unsub();
         this.unsubs = [];
         this.cfg.input.aimAssist = null;
+        this.cfg.input.moveAssist = null;
         this.horde = null;
     }
 }
