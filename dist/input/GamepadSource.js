@@ -20,6 +20,14 @@ export const BTN = {
     DPAD_LEFT: 14,
     DPAD_RIGHT: 15,
 };
+/**
+ * Whether a button is down.
+ *
+ * Analogue triggers report a `value` and may never set `pressed`; digital ones
+ * only set `pressed`. Reading both is what makes L2/R2 work across the pads and
+ * firmwares that disagree about which they are.
+ */
+const held = (button) => button ? button.value > 0.35 || button.pressed : false;
 const NAV_REPEAT_DELAY = 420;
 const NAV_REPEAT_RATE = 130;
 /**
@@ -69,19 +77,24 @@ export class GamepadSource {
         const right = applyDeadzone(rx, ry, dz);
         if (right.mag > 0)
             this.lastAim = Math.atan2(right.y, right.x);
-        // Analogue triggers report a value; digital ones only report `pressed`.
         // The PlayStation browser reports R2 as an axis on some firmwares, so the
         // right stick at full deflection is accepted as a fire intent too.
-        const rt = pad.buttons[BTN.RT];
-        const triggerHeld = rt ? rt.value > 0.35 || rt.pressed : false;
-        const firing = triggerHeld || pad.buttons[BTN.RB]?.pressed === true || right.mag > 0.85;
+        const firing = held(pad.buttons[BTN.RT]) || pad.buttons[BTN.RB]?.pressed === true || right.mag > 0.85;
+        // Triggers as a pair: right shoots, left is the ability. That is where a
+        // player's fingers already are, and it is what every shooter on a console
+        // has taught them to expect. A and L1 stay wired to it as well — they were
+        // the original binding, and taking them away would break the muscle memory
+        // of anyone who has been playing with them.
+        const ability = held(pad.buttons[BTN.LT]) ||
+            pad.buttons[BTN.A]?.pressed === true ||
+            pad.buttons[BTN.LB]?.pressed === true;
         return {
             moveX: left.x,
             moveY: left.y,
             aim: this.lastAim,
             firing,
-            ability: pad.buttons[BTN.A]?.pressed === true || pad.buttons[BTN.LB]?.pressed === true,
-            active: left.mag > 0 || right.mag > 0 || firing,
+            ability,
+            active: left.mag > 0 || right.mag > 0 || firing || ability,
         };
     }
     /**

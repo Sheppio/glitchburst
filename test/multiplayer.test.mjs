@@ -239,12 +239,20 @@ check('peer publishes no horde snapshots', bState.hordePublished === 0);
     // follows with a lerp, so it is snapped rather than waited on — otherwise
     // the teammate is still in shot when the markers are read and the test
     // measures the camera's easing instead of the marker.
-    remote.state.x = 2300;
-    remote.state.y = 1500;
-    scene.me.x = 300;
-    scene.me.y = 300;
-    scene.cameras.main.centerOn(300, 300);
-    await new Promise((r) => setTimeout(r, 400));
+    // Held for the duration rather than set once. The teammate broadcasts its
+    // real position fifteen times a second and the camera eases toward this
+    // client's own, so a set-and-wait measures whatever the network and the
+    // lerp happened to leave behind — which is how this came to fail about one
+    // run in five.
+    const frame = () => new Promise((r) => requestAnimationFrame(r));
+    for (let i = 0; i < 24; i++) {
+      remote.state.x = 2300;
+      remote.state.y = 1500;
+      scene.me.x = 300;
+      scene.me.y = 300;
+      scene.cameras.main.centerOn(300, 300);
+      await frame();
+    }
 
     const shown = scene.markers.items.filter((m) => m.sprite.visible);
     const view = scene.cameras.main.worldView;

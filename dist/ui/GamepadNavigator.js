@@ -33,10 +33,17 @@ export class GamepadNavigator {
         if (this.running)
             return;
         this.running = true;
+        // Arrow keys and space drive the same machinery the pad does. Attached and
+        // detached with the pad loop rather than left on the document for the life
+        // of the page, which is what keeps it out of the way during a match: the
+        // navigator is stopped while there is a character to drive, and those are
+        // gameplay keys then.
+        window.addEventListener('keydown', this.onKeyDown, true);
         this.tick();
     }
     stop() {
         this.running = false;
+        window.removeEventListener('keydown', this.onKeyDown, true);
         if (this.raf)
             cancelAnimationFrame(this.raf);
         this.raf = 0;
@@ -79,6 +86,60 @@ export class GamepadNavigator {
                 this.lockFocus();
         }
         this.raf = requestAnimationFrame(this.tick);
+    };
+    /**
+     * Keyboard menu navigation, for a desktop player with no controller.
+     *
+     * Routed through the same `move`/`confirm` the pad uses rather than reimplemented,
+     * so the two can never disagree about where the ring goes — and so a slider
+     * and a dropdown behave identically however you are driving them.
+     *
+     * Registered in the **capture** phase, which is not a detail. The gameplay
+     * keyboard source listens on the window too and swallows arrows and space
+     * outright — it is constructed once for the life of the page, not per match —
+     * so in the bubble phase whichever handler happened to register first won,
+     * and menu navigation was a no-op. Capturing lets the menus take first
+     * refusal on exactly the keys they use while they are the thing on screen,
+     * and `stopPropagation` then keeps those presses away from the character:
+     * pressing space on a menu button used to latch an ability that fired the
+     * instant the next run started.
+     *
+     * `preventDefault` matters on every branch that acts. Arrows would otherwise
+     * scroll the page, and a focused button, range or select would take the key
+     * natively *as well*, moving a slider two steps for one press.
+     */
+    onKeyDown = (event) => {
+        if (!this.running)
+            return;
+        // A browser shortcut, not a menu press.
+        if (event.metaKey || event.ctrlKey || event.altKey)
+            return;
+        const active = document.activeElement;
+        const typing = active instanceof HTMLElement && isTextInput(active);
+        const direction = event.key === 'ArrowUp' ? 'up'
+            : event.key === 'ArrowDown' ? 'down'
+                : event.key === 'ArrowLeft' ? 'left'
+                    : event.key === 'ArrowRight' ? 'right'
+                        : null;
+        if (direction) {
+            // Left and right inside a text field belong to the caret. Up and down do
+            // not mean anything there, so they are free to move the ring.
+            if (typing && (direction === 'left' || direction === 'right'))
+                return;
+            event.preventDefault();
+            event.stopPropagation();
+            this.move(direction);
+            return;
+        }
+        if (event.key === ' ' || event.key === 'Enter') {
+            // In a text field a space is a space, and Enter is already wired to
+            // submit on the fields that want it.
+            if (typing)
+                return;
+            event.preventDefault();
+            event.stopPropagation();
+            this.confirm();
+        }
     };
     /* ------------------------------------------------------------- internals */
     /** True while a pad is actually attached. */

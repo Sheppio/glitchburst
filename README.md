@@ -1,6 +1,6 @@
 # GLITCHBURST
 
-<!-- version -->**v0.2.28**<!-- /version --> — the build currently on Pages.
+<!-- version -->**v0.2.29**<!-- /version --> — the build currently on Pages.
 
 A co-op top-down horde shooter that runs entirely in the browser. **No game server.**
 Every client talks to a public MQTT broker over WebSockets, and one of them
@@ -38,7 +38,7 @@ Developing needs the compiler:
 ```bash
 npm install
 npm run watch      # tsc --watch, rebuilding dist/ on save
-npm test           # 384 tests: simulation, codec, single client, mobile, controller, two clients
+npm test           # 386 tests: simulation, codec, single client, mobile, controller, two clients
 ```
 
 `dist/` is committed on purpose — it is what GitHub Pages serves.
@@ -943,6 +943,14 @@ auto-aim and auto-fire.
 
 Tuned for Xbox Edge, the PlayStation browser and the Steam Deck:
 
+**Triggers as a pair:** right shoots, left fires the class ability. That is
+where a player's fingers already are, and it is what every shooter on a console
+has taught them to expect. A and L1 stay wired to the ability as well, because
+they were the original binding and taking them away would break the muscle
+memory of anyone already playing with them. Both triggers read `value` as well
+as `pressed`: analogue triggers report a value and may never set `pressed`,
+digital ones only set `pressed`, and pads disagree about which they are.
+
 - **Stick-drift filter.** A fixed **0.15 per-axis** threshold zeroes each axis
   before anything reads it, then a radial deadzone shapes the remaining travel.
   Per-axis kills drift; radial stops diagonals outrunning cardinals.
@@ -966,6 +974,21 @@ Tuned for Xbox Edge, the PlayStation browser and the Steam Deck:
 - **Focus prompt.** Console browsers only route gamepad input to the page while
   the page holds focus, so the menu says so, and **Menu/Options** goes fullscreen
   and pulls focus back.
+
+The same machinery answers the **arrow keys and space** on a desktop with no
+controller attached, rather than being reimplemented — so a slider and a
+dropdown behave identically however you are driving them, and the two can never
+disagree about where the ring goes.
+
+Those key handlers are registered in the **capture** phase, which is not a
+detail. The gameplay keyboard source listens on the window too and swallows
+arrows and space outright — it is constructed once for the life of the page, not
+per match — so in the bubble phase whichever handler happened to register first
+won, and menu navigation was simply a no-op. Capturing lets the menus take first
+refusal on exactly the keys they use while they are the thing on screen, and
+stopping propagation then keeps those presses away from the character: pressing
+space on a menu button used to latch an ability that fired the instant the next
+run started.
 
 ---
 
@@ -1001,7 +1024,7 @@ for a game — just don't build anything that needs privacy on top of it.
 npm test
 ```
 
-384 checks across five suites. The browser suites vendor Phaser locally and
+386 checks across five suites. The browser suites vendor Phaser locally and
 swap MQTT for a loopback stub that relays over `BroadcastChannel`, so two tabs
 share one "broker" and a real multi-client room can be tested offline.
 
@@ -1012,11 +1035,11 @@ share one "broker" and a real multi-client room can be tested offline.
   scoring formula, enemy levels and their health/reward curves, wave streaming
   and the tempo floor, the autopilot's steering bands and its survival against a
   live horde, and the audio volume curve.
-- **`smoke.test.mjs`** (52) — menus, settings persistence and migration, Phaser
+- **`smoke.test.mjs`** (53) — menus, settings persistence and migration, Phaser
   boot, election, 20 Hz batching, attacker-authority kills, point-blank hits,
   chip pickup and conversion, turn rate, abilities, pause, settings over a live
   match, and broadcast rate under a starved renderer.
-- **`gamepad.test.mjs`** (16) — the whole front end driven by a virtual pad and
+- **`gamepad.test.mjs`** (17) — the whole front end driven by a virtual pad and
   nothing else: no click, no keypress. Menu to match, the on-screen keyboard,
   the pause card, a slider, and back out again.
 - **`mobile.test.mjs`** (15) — an emulated Pixel with a touchscreen and no

@@ -232,6 +232,36 @@ await step('the host starts the run from the pad', async () => {
   return { ok: (await screen()) === 'hud' && name.length === 3, note: `deployed as "${name}"` };
 });
 
+await step('the left trigger fires the ability', async () => {
+  // Triggers as a pair: right shoots, left is the ability. Driven here as an
+  // *analogue* input that never sets `pressed` — which is how some firmwares
+  // report L2, and reading only `pressed` would miss it entirely.
+  const out = await page.evaluate(async () => {
+    const scene = window.glitchburst.game.scene.getScene('game');
+    const frame = () => new Promise((r) => requestAnimationFrame(r));
+    scene.abilityCooldown = 0;
+    await frame();
+    const before = scene.abilityCooldown;
+
+    window.__pad.buttons[6] = { pressed: false, value: 0.9 };
+    window.__pad.timestamp = performance.now();
+    for (let i = 0; i < 4; i++) await frame();
+
+    const after = scene.abilityCooldown;
+    window.__pad.buttons[6] = { pressed: false, value: 0 };
+    window.__pad.timestamp = performance.now();
+    await frame();
+    return { before, after };
+  });
+
+  return {
+    // The cooldown keeps ticking down past zero while it is ready, so "ready"
+    // is <= 0 rather than exactly 0.
+    ok: out.before <= 0 && out.after > 0,
+    note: `cooldown ${out.before.toFixed(2)} → ${out.after.toFixed(1)}s on an analogue-only L2`,
+  };
+});
+
 await step('Start pauses, and the pause card takes the ring', async () => {
   await page.waitForTimeout(600);
   await press(BTN.MENU);

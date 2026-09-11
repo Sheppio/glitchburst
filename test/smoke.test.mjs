@@ -254,6 +254,76 @@ await step('the character-select button says what it will do', async () => {
   };
 });
 
+await step('the menus work from the arrow keys and space alone', async () => {
+  // Every input here is a real key event: no click, no pad, no focus() call.
+  // A desktop player without a controller has to be able to get around.
+  const ring = () => page.evaluate(() => document.activeElement?.id ?? 'none');
+  const screen = () => page.evaluate(
+    () => [...document.querySelectorAll('[data-screen]')].find((s) => !s.hidden)?.dataset.screen ?? 'none',
+  );
+  /** Press `key` until the ring lands on `id`, or give up rather than hang. */
+  const ringTo = async (id, key, tries = 14) => {
+    for (let i = 0; i < tries; i++) {
+      if ((await ring()) === id) return true;
+      await page.keyboard.press(key);
+    }
+    return (await ring()) === id;
+  };
+
+  const before = await page.inputValue('#input-callsign');
+
+  // The ring has to move, and to keep moving — a single row of buttons once
+  // swallowed "down" entirely.
+  await page.keyboard.press('ArrowDown');
+  const walked = [];
+  for (const key of ['ArrowRight', 'ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp']) {
+    const from = await ring();
+    await page.keyboard.press(key);
+    walked.push(from !== (await ring()));
+  }
+
+  // Space selects.
+  const reachedCreate = await ringTo('btn-create', 'ArrowRight');
+  await page.keyboard.press(' ');
+  const afterSpace = await screen();
+
+  // A text field keeps its own keys: space types a space, and left and right
+  // move the caret rather than the ring.
+  const reachedField = await ringTo('input-callsign', 'ArrowDown');
+  await page.keyboard.type('AB');
+  await page.keyboard.press(' ');
+  await page.keyboard.press('ArrowLeft');
+  const field = await page.evaluate(() => ({
+    value: document.getElementById('input-callsign').value,
+    stillFocused: document.activeElement?.id === 'input-callsign',
+  }));
+
+  // Put the callsign back the way the rest of the suite expects it.
+  await page.fill('#input-callsign', before);
+  await page.click('#btn-class-back');
+
+  // A slider moves one step per press, not two. Without preventDefault the
+  // browser's own range handling and the navigator would both act on it.
+  await page.click('#btn-settings');
+  await page.waitForSelector('#screen-settings:not([hidden])');
+  await page.evaluate(() => window.glitchburst.settings.set('zoom', 1));
+  await page.evaluate(() => document.getElementById('range-zoom').focus());
+  await page.keyboard.press('ArrowRight');
+  const zoom = await page.evaluate(() => window.glitchburst.settings.current.zoom);
+  await page.evaluate(() => window.glitchburst.settings.set('zoom', 1));
+  await page.click('#btn-settings-back');
+
+  return {
+    ok:
+      walked.every(Boolean) &&
+      reachedCreate && afterSpace === 'class' &&
+      reachedField && field.value === `${before}AB ` && field.stillFocused &&
+      Math.abs(zoom - 1.05) < 1e-9,
+    note: `${walked.filter(Boolean).length}/5 presses moved the ring, space reached ${afterSpace}, ` +
+      `field kept "${field.value}" and focus, one press took the slider 1 → ${zoom}`,
+  };
+});
+
 await step('create room generates a code', async () => {
   await page.click('#btn-create');
   const code = (await page.textContent('#room-code-label'))?.trim();
