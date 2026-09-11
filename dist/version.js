@@ -4,5 +4,5 @@
  * GENERATED — do not edit. `scripts/bump-version.mjs` rewrites this on every
  * commit via the pre-commit hook in `.githooks/`, which `npm install` wires up.
  */
-export const VERSION = '0.2.17';
+export const VERSION = '0.2.18';
 //# sourceMappingURL=version.js.map

@@ -2,6 +2,7 @@ import { HORDE, NET } from '../config.js';
 import type { ClassId, PlayerId, RoomId } from '../types.js';
 import { Emitter } from '../util.js';
 import { decodeHeartbeat, decodePresence, encodeHeartbeat, encodePresence } from './codec.js';
+import type { HeartbeatStats } from './codec.js';
 import type { MqttNet } from './MqttNet.js';
 import { Topics, segment } from './topics.js';
 
@@ -20,7 +21,16 @@ export interface RoomEvents extends Record<string, unknown> {
   /** Fired whenever authority moves — including the initial claim on room creation. */
   hostChange: { hostId: PlayerId | null; isHost: boolean; reason: 'initial' | 'election' | 'yield' };
   /** Host-authored liveness data, useful for the HUD on peers. */
-  hostStats: { enemyCount: number; wave: number; paused: boolean; score: number | null };
+  hostStats: {
+    enemyCount: number;
+    wave: number;
+    paused: boolean;
+    score: number | null;
+    /** False while the room is sitting in the lobby. Null on an older build. */
+    running: boolean | null;
+    kills: number;
+    seconds: number;
+  };
   /** This client arrived at a room that already holds a full squad of four. */
   roomFull: { capacity: number };
 }
@@ -54,12 +64,24 @@ export class RoomSession {
   private joined = false;
   private announcedFull = false;
 
+  /**
+   * Whether a run is in progress, as opposed to the room sitting in its lobby.
+   *
+   * Published on the host's heartbeat, which is what pulls everyone into a run
+   * together and, because it repeats twice a second, what lets someone who
+   * joins late walk straight into the match already underway.
+   */
+  running = false;
+
   /** Set by the game each tick so the heartbeat can carry live stats. */
-  hostStatsProvider: () => { enemyCount: number; wave: number; paused: boolean; score: number } = () => ({
+  hostStatsProvider: () => HeartbeatStats = () => ({
     enemyCount: 0,
     wave: 0,
     paused: false,
     score: 0,
+    running: false,
+    kills: 0,
+    seconds: 0,
   });
 
   constructor(
@@ -200,7 +222,13 @@ export class RoomSession {
     // Carries the pause flag, so a client joining a paused room learns about it
     // within one heartbeat instead of running while everyone else is frozen.
     this.events.emit('hostStats', {
-      enemyCount: hb.enemyCount, wave: hb.wave, paused: hb.paused, score: hb.score,
+      enemyCount: hb.enemyCount,
+      wave: hb.wave,
+      paused: hb.paused,
+      score: hb.score,
+      running: hb.running,
+      kills: hb.kills,
+      seconds: hb.seconds,
     });
 
     // Split brain: the lower id always wins, so step down immediately.
@@ -223,9 +251,7 @@ export class RoomSession {
     const stats = this.hostStatsProvider();
     this.net.publish(
       Topics.hostBeat(this.roomId),
-      encodeHeartbeat(
-        this.playerId, ++this.beatSeq, stats.enemyCount, stats.wave, stats.paused, stats.score,
-      ),
+      encodeHeartbeat(this.playerId, ++this.beatSeq, { ...stats, running: this.running }),
     );
   }
 

@@ -4,7 +4,7 @@
  * and host failover — the parts of the architecture that only exist when more
  * than one client is present.
  */
-import { buildRig, launch, reporter, startServer } from './rig.mjs';
+import { buildRig, launch, reporter, startRunAsHost, startServer, waitForRun } from './rig.mjs';
 import { ENEMY_DEFS } from '../dist/sim/enemyTypes.js';
 import { killScore } from '../dist/sim/enemyLevels.js';
 
@@ -64,7 +64,7 @@ const code = (await a.textContent('#room-code-label')).trim();
 await a.fill('#input-callsign', 'ALPHA');
 await a.click('.class-card[data-cls="overclocker"]');
 await a.click('#btn-deploy');
-await a.waitForSelector('#screen-hud:not([hidden])');
+await startRunAsHost(a);
 await a.waitForFunction(() => window.glitchburst.room?.isHost === true, null, { timeout: 6000 });
 await keepAlive(a);
 
@@ -90,7 +90,10 @@ await b.click('#btn-join');
 await b.fill('#input-callsign', 'BRAVO');
 await b.click('.class-card[data-cls="encoder"]');
 await b.click('#btn-deploy');
-await b.waitForSelector('#screen-hud:not([hidden])');
+// B never presses anything: the host's heartbeat says the room is playing, and
+// that alone walks the late joiner into the match already underway.
+await waitForRun(b);
+check('a late joiner is pulled into a run already in progress', true);
 await keepAlive(b);
 await b.waitForTimeout(2500);
 
@@ -174,6 +177,38 @@ check('peer publishes no horde snapshots', bState.hordePublished === 0);
   check('a peer that misses a death event is repaired by the heartbeat',
     healed && peerScore === hostScore,
     `peer forced to 1, recovered to ${peerScore} against the host's ${hostScore}`);
+}
+
+/* ---------------------------------------------------------- run summary */
+
+{
+  // Rounds fired is the stat only each client knows about itself, so it is the
+  // one that proves aggregation rather than broadcast.
+  await a.bringToFront();
+  await a.evaluate(() => { window.glitchburst.game.scene.getScene('game').shotsFired = 700; });
+  await b.bringToFront();
+  await b.evaluate(() => { window.glitchburst.game.scene.getScene('game').shotsFired = 300; });
+
+  // Published once a second, so both clients need a moment to hear each other.
+  const summed = await b
+    .waitForFunction(
+      () => {
+        const s = window.glitchburst.game.scene.getScene('game');
+        return [...s.playerStats.values()].reduce((t, p) => t + p.shots, 0) >= 1000;
+      },
+      null,
+      { timeout: 8000 },
+    )
+    .then(() => true)
+    .catch(() => false);
+
+  const onPeer = await b.evaluate(() => {
+    const s = window.glitchburst.game.scene.getScene('game');
+    return [...s.playerStats.values()].reduce((t, p) => t + p.shots, 0);
+  });
+
+  check('the debrief totals the squad, not the player', summed && onPeer >= 1000,
+    `peer sees ${onPeer} rounds fired across the room, having fired 300 itself`);
 }
 
 /* -------------------------------------------------------- interpolation */
@@ -331,6 +366,11 @@ for (const page of [a, b]) {
     scene.deaths = 0;
     scene.downedFor = 0;
     scene.me.hp = scene.me.maxHp;
+    // A finished run stops the host tick for good — in play the next run is a
+    // brand new scene. These tests resurrect the run in place, so the tick has
+    // to be restarted by hand or everything after this measures a dead horde.
+    if (scene.horde) scene.startHostLoop();
+    window.glitchburst.room.running = true;
     window.__keepAlive = setInterval(() => { scene.me.hp = scene.me.maxHp; }, 100);
   });
 }

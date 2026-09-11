@@ -14,6 +14,9 @@ import type { ClassId } from './types.js';
 import { GamepadNavigator } from './ui/GamepadNavigator.js';
 import { UI } from './ui/UI.js';
 import { sanitizeName } from './net/codec.js';
+import { isClassId } from './sim/classes.js';
+import { orderSquad } from './render/squadOrder.js';
+import type { LobbyMember } from './ui/UI.js';
 import { VERSION } from './version.js';
 import { makePlayerId, makeRoomCode } from './util.js';
 
@@ -113,19 +116,23 @@ const ui = new UI(uiRoot, settings, {
     void deploy(cls);
   },
 
+  onStartRun() {
+    startRun();
+  },
+
+  onReturnToLobby() {
+    endRun();
+    ui.setLobby(lobbyRoster(), room?.isHost ?? false);
+    ui.show('lobby');
+    navigator_.start();
+  },
+
   onLeave() {
     teardown();
     ui.show('menu');
     navigator_.start();
   },
 
-  onPlayAgain() {
-    // A fresh run in the same room: tear the scene down and deploy again, so
-    // the horde engine, progression and reboot count all start clean.
-    const cls = lastClass;
-    teardown();
-    void deploy(cls);
-  },
 
   onTogglePause() {
     const scene = game?.scene.getScene('game') as GameScene | undefined;
@@ -144,9 +151,17 @@ const ui = new UI(uiRoot, settings, {
     if (visible) {
       navigator_.start();
       navigator_.focusFirst();
-    } else {
+      return;
+    }
+    // Stand down only when there is a character for the pad to drive. Closing
+    // a menu with no match behind it — the failure screen handing back to the
+    // lobby — must leave navigation running, or the controller goes dead on a
+    // perfectly ordinary menu screen.
+    if (game) {
       navigator_.stop();
       document.body.classList.remove('nav-focus');
+    } else {
+      navigator_.start();
     }
   },
 
@@ -212,18 +227,6 @@ async function deploy(cls: ClassId): Promise<void> {
   room = new RoomSession(net, pendingRoomCode, playerId, name, cls);
   room.join();
 
-  const sceneInit: GameSceneInit = {
-    net,
-    room,
-    input,
-    settings,
-    classId: cls,
-    playerName: name,
-    sfx,
-    onHud: (snapshot: HudSnapshot) => ui.updateHud(snapshot),
-    onBanner: (text, sub) => ui.banner(text, sub),
-  };
-
   room.events.on('hostChange', ({ isHost, reason }) => {
     if (reason === 'initial' && isHost) ui.toast('You are the host — this client runs the horde.', 'good');
     else if (reason === 'election' && isHost) ui.toast('Host lost. Authority transferred to this client.', 'warn');
@@ -239,6 +242,84 @@ async function deploy(cls: ClassId): Promise<void> {
     navigator_.start();
   });
   room.events.on('peerLeave', () => ui.toast('A player disconnected.', 'warn'));
+
+  // The lobby roster is just the room's presence list, which already carries
+  // every player's name and class.
+  const refreshLobby = (): void => {
+    if (!room) return;
+    ui.setLobby(lobbyRoster(), room.isHost);
+  };
+  for (const event of ['roster', 'peerJoin', 'peerLeave', 'hostChange'] as const) {
+    room.events.on(event, refreshLobby);
+  }
+
+  /**
+   * A run in progress pulls everyone in.
+   *
+   * The host's heartbeat carries whether the room is playing, twice a second,
+   * so this is also the whole late-join story: someone arriving mid-match sees
+   * `running` within half a second and walks straight into the wave, which the
+   * horde snapshot then materialises for them.
+   */
+  room.events.on('hostStats', ({ running }) => {
+    if (running === true && !game) startRun();
+  });
+
+  ui.setRoomCode(pendingRoomCode);
+  refreshLobby();
+  ui.show('lobby');
+  connecting = false;
+}
+
+/** The room's presence list, as the lobby wants to read it. */
+function lobbyRoster(): LobbyMember[] {
+  const session = room;
+  if (!session) return [];
+  const me: LobbyMember = {
+    id: playerId,
+    name: sanitizeName(ui.callsign),
+    cls: lastClass,
+    isSelf: true,
+    isHost: session.isHost,
+  };
+  const others: LobbyMember[] = [...session.peers.values()].map((peer) => ({
+    id: peer.id,
+    name: peer.name,
+    cls: isClassId(peer.cls) ? peer.cls : 'overclocker',
+    isSelf: false,
+    isHost: session.hostId === peer.id,
+  }));
+  // Same order as the in-game squad bars, so the roster does not reshuffle
+  // between the lobby and the match.
+  return orderSquad([me, ...others]);
+}
+
+/**
+ * Boot the match.
+ *
+ * Split from `deploy` so the room outlives any single run: the broker
+ * connection and the presence roster are set up once, and a run is created and
+ * destroyed inside them. That is what makes returning to a populated lobby
+ * afterwards possible at all.
+ */
+function startRun(): void {
+  if (!room || game) return;
+
+  const name = sanitizeName(ui.callsign);
+  const sceneInit: GameSceneInit = {
+    net,
+    room,
+    input,
+    settings,
+    classId: lastClass,
+    playerName: name,
+    sfx,
+    onHud: (snapshot: HudSnapshot) => ui.updateHud(snapshot),
+    onBanner: (text, sub) => ui.banner(text, sub),
+  };
+
+  // The host is the one that declares the room to be playing; peers follow.
+  if (room.isHost) room.running = true;
 
   game = new Phaser.Game({
     type: Phaser.AUTO,
@@ -270,17 +351,28 @@ async function deploy(cls: ClassId): Promise<void> {
   syncMusic();
   ui.show('hud');
   ui.setRoomCode(pendingRoomCode);
-  connecting = false;
+}
+
+/**
+ * End the run but keep the room.
+ *
+ * The Phaser game is disposable; the broker connection and the roster are not.
+ * Tearing both down together is what used to make "play again" a round trip
+ * through the main menu.
+ */
+function endRun(): void {
+  music.stop();
+  input.setInGame(false);
+  if (room?.isHost) room.running = false;
+  game?.destroy(true);
+  game = null;
 }
 
 function teardown(): void {
-  music.stop();
-  input.setInGame(false);
+  endRun();
   room?.leave();
   room = null;
   net.disconnect();
-  game?.destroy(true);
-  game = null;
 }
 
 /* ------------------------------------------------------------------ misc */

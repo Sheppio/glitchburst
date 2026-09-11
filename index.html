@@ -152,6 +152,33 @@
         </div>
       </section>
 
+      <!-- ------------------------------------------------------------ LOBBY -->
+      <section class="screen" id="screen-lobby" data-screen="lobby" hidden>
+        <div class="panel">
+          <h2 class="panel-title">Staging area</h2>
+          <p class="panel-sub">
+            Share the code and wait for the squad. The host starts the run.
+          </p>
+
+          <div class="room-code-block">
+            <span class="room-code-label">Room</span>
+            <strong class="room-code" id="lobby-room-code">----</strong>
+          </div>
+
+          <p class="field-hint" id="lobby-link-hint">
+            Anyone on the link joins this room directly.
+          </p>
+
+          <div class="roster" id="lobby-roster"></div>
+
+          <div class="button-row">
+            <button class="btn btn-primary" id="btn-start-run" data-nav-default>Start run</button>
+            <button class="btn btn-ghost" id="btn-lobby-leave" data-nav-back>Leave room</button>
+          </div>
+          <p class="field-hint" id="lobby-status">Waiting for the host to start.</p>
+        </div>
+      </section>
+
       <!-- ------------------------------------------------------- CONNECTING -->
       <section class="screen" id="screen-connecting" data-screen="connecting" hidden>
         <div class="panel panel-narrow">
@@ -232,17 +259,18 @@
 
         <!-- End of the run. -->
         <div class="pause-veil over-veil" id="over-veil" data-nav-modal hidden>
-          <div class="pause-card">
+          <div class="pause-card over-card">
             <h2>SYSTEM FAILURE</h2>
             <p class="pause-by" id="over-reason">All reboots exhausted</p>
-            <div class="over-stats">
-              <div><span id="over-wave">0</span><small>Wave</small></div>
-              <div><span id="over-score">0</span><small>Score</small></div>
-              <div><span id="over-chips">0</span><small>Chips</small></div>
-            </div>
+
+            <!-- Group totals, not per player. This is a co-op game: a split
+                 summary turns "how did we do" into "who carried". -->
+            <p class="summary-heading">Squad debrief</p>
+            <dl class="summary" id="over-summary"></dl>
+
             <div class="button-row">
-              <button class="btn btn-primary" id="btn-again" data-nav-skip>Play again</button>
-              <button class="btn btn-ghost" id="btn-over-leave" data-nav-skip>Menu</button>
+              <button class="btn btn-primary" id="btn-to-lobby" data-nav-default>Return to lobby</button>
+              <button class="btn btn-ghost" id="btn-over-leave">Menu</button>
             </div>
           </div>
         </div>

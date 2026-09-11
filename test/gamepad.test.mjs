@@ -119,8 +119,17 @@ await step('B backs out of the keyboard, not out of the screen behind it', async
   return { ok: s === 'class', note: `still on ${s}` };
 });
 
-await step('deploying starts the match from the pad', async () => {
+await step('deploying reaches the lobby from the pad', async () => {
   await focusOn('btn-deploy');
+  await press(BTN.A);
+  await page.waitForSelector('#screen-lobby:not([hidden])', { timeout: 15000 });
+  const roster = await page.$$eval('.roster-row .roster-name', (n) => n.map((e) => e.textContent));
+  return { ok: (await screen()) === 'lobby' && roster.length === 1, note: `roster: ${roster.join(', ')}` };
+});
+
+await step('the host starts the run from the pad', async () => {
+  await page.waitForSelector('#btn-start-run:not([hidden])', { timeout: 15000 });
+  await focusOn('btn-start-run');
   await press(BTN.A);
   await page.waitForSelector('#screen-hud:not([hidden])', { timeout: 15000 });
   const name = await page.evaluate(() => window.glitchburst.game.scene.getScene('game').me.name);

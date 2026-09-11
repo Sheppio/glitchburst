@@ -22,6 +22,10 @@ export const Topics = {
   playerState: (r: RoomId, p: PlayerId) => `${root}/room/${r}/player/${p}/state`,
   playerStateAll: (r: RoomId) => `${root}/room/${r}/player/+/state`,
 
+  /** One player's contribution to the group run summary. */
+  playerStats: (r: RoomId, p: PlayerId) => `${root}/room/${r}/player/${p}/stats`,
+  playerStatsAll: (r: RoomId) => `${root}/room/${r}/player/+/stats`,
+
   /** Shots fired by one player, batched. Cosmetic only — see GameScene. */
   playerShots: (r: RoomId, p: PlayerId) => `${root}/room/${r}/player/${p}/shots`,
   playerShotsAll: (r: RoomId) => `${root}/room/${r}/player/+/shots`,

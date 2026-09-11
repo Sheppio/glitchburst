@@ -7,7 +7,7 @@ import { HordeEngine } from '../dist/sim/HordeEngine.js';
 import {
   encodeHorde, decodeHorde, encodeEvents, decodeEvents,
   encodePlayer, decodePlayer, encodeField, decodeField, sanitizeName,
-  encodeHeartbeat, decodeHeartbeat,
+  encodeHeartbeat, decodeHeartbeat, encodePlayerStats, decodePlayerStats,
 } from '../dist/net/codec.js';
 import { HORDE, PLAYER, TURN_RATE_RAD_PER_SEC } from '../dist/config.js';
 import { PlayerProgress, PROGRESSION, UPGRADES, UPGRADE_ORDER } from '../dist/sim/progression.js';
@@ -23,6 +23,9 @@ import { CLASSES, CLASS_ORDER, classDps, weaponRange } from '../dist/sim/classes
 import { Pool } from '../dist/render/pool.js';
 import { fadeOut } from '../dist/render/lerp.js';
 import { orderSquad } from '../dist/render/squadOrder.js';
+import {
+  accuracy, EMPTY_PLAYER_STATS, formatDuration, summaryRows, sumPlayerStats,
+} from '../dist/sim/stats.js';
 import { CHANNEL_REFERENCE, channelGain, volumeCurve } from '../dist/audio/volume.js';
 import { DEFAULT_SETTINGS, RANGES } from '../dist/input/settings.js';
 
@@ -97,18 +100,28 @@ const run = (engine, seconds, t = targets(1)) => {
 }
 
 {
-  // The heartbeat carries the room score, which is what keeps two clients
-  // agreeing after a dropped death event.
-  const beat = decodeHeartbeat(encodeHeartbeat('host1', 7, 42, 9, true, 1234));
+  // The heartbeat carries the room score and the run state, which is what
+  // keeps two clients agreeing after a dropped event — and what pulls a late
+  // joiner straight into a match already underway.
+  const full = { enemyCount: 42, wave: 9, paused: true, score: 1234, running: true, kills: 77, seconds: 305 };
+  const beat = decodeHeartbeat(encodeHeartbeat('host1', 7, full));
   check('heartbeat round-trips the room score',
     beat.hostId === 'host1' && beat.score === 1234 && beat.wave === 9 && beat.enemyCount === 42 && beat.paused);
+  check('heartbeat round-trips the run state and summary',
+    beat.running === true && beat.kills === 77 && beat.seconds === 305);
 
-  // Score is optional on the wire. Absent must not read as zero: zero is a
-  // legitimate score, and adopting it every beat would wipe the board.
+  // The tail fields are optional on the wire. Absent must not read as zero or
+  // false: zero is a legitimate score and adopting it every beat would wipe the
+  // board, and a missing run flag read as "lobby" would strand everyone outside
+  // a live match.
   const legacy = decodeHeartbeat(['host1', '7', '42', '9', '1'].join(','));
   check('a heartbeat without a score reports null, not zero', legacy.score === null,
     `got ${JSON.stringify(legacy.score)}`);
-  check('a zero score is still reported as zero', decodeHeartbeat(encodeHeartbeat('h', 1, 0, 0, false, 0)).score === 0);
+  check('a heartbeat without a run flag reports null, not false', legacy.running === null);
+  check('a zero score is still reported as zero',
+    decodeHeartbeat(encodeHeartbeat('h', 1, { ...full, score: 0 })).score === 0);
+  check('a lobby heartbeat reports running false, not null',
+    decodeHeartbeat(encodeHeartbeat('h', 1, { ...full, running: false })).running === false);
   check('a malformed heartbeat is rejected', decodeHeartbeat('nonsense') === null);
 }
 
@@ -366,6 +379,46 @@ const run = (engine, seconds, t = targets(1)) => {
     .map((l) => fadeOut(l, 0.3))
     .every((v, i, a) => i === 0 || v <= a[i - 1]));
   check('a zero lifetime cannot divide by zero', fadeOut(1, 0) === 1);
+}
+
+/* ---------------------------------------------------------- run summary */
+
+{
+  const a = { shots: 120, chips: 40, powerUps: 3, reboots: 1 };
+  const b = { shots: 80, chips: 25, powerUps: 2, reboots: 4 };
+
+  const total = sumPlayerStats([a, b]);
+  check('per-player contributions add up into a group total',
+    total.shots === 200 && total.chips === 65 && total.powerUps === 5 && total.reboots === 5);
+  check('an empty room totals zero', sumPlayerStats([]).shots === EMPTY_PLAYER_STATS.shots);
+  check('one player is their own total', sumPlayerStats([a]).chips === 40);
+
+  check('hit rate is kills over rounds fired', accuracy(30, 120) === 25);
+  check('no shots is not a divide by zero', accuracy(5, 0) === 0);
+  // Kills come from the host and shots are summed across clients, so a late
+  // stats publish can briefly make kills the larger number. A card claiming
+  // 140% reads as broken even though nothing is wrong.
+  check('hit rate cannot exceed 100%', accuracy(200, 10) === 100);
+
+  check('a run is timed in minutes and seconds', formatDuration(185) === '3:05');
+  check('under a minute still shows minutes', formatDuration(7) === '0:07');
+  check('a negative clock cannot print', formatDuration(-5) === '0:00');
+
+  const rows = summaryRows(
+    { kills: 412, wave: 11, seconds: 754, score: 9876 },
+    { shots: 2000, chips: 300, powerUps: 12, reboots: 6 },
+  );
+  const byLabel = Object.fromEntries(rows.map((r) => [r.label, r.value]));
+  check('the debrief reports the group, not the player',
+    byLabel['Rounds fired'] === '2,000' && byLabel['Malware purged'] === '412');
+  check('the debrief shows the run length', byLabel['Uptime'] === '12:34');
+  check('every row has a value', rows.length > 5 && rows.every((r) => r.label && r.value !== ''),
+    `${rows.length} rows`);
+
+  // The summary crosses the wire per player; it has to survive the trip.
+  const wire = decodePlayerStats(encodePlayerStats(a));
+  check('per-player stats round-trip', JSON.stringify(wire) === JSON.stringify(a));
+  check('a malformed stats payload is rejected', decodePlayerStats('1,2') === null);
 }
 
 /* ----------------------------------------------------------- squad order */

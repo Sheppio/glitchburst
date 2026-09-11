@@ -102,3 +102,22 @@ export function reporter(title) {
     },
   };
 }
+
+/**
+ * Deploy lands in the lobby now, not in the match — the host still has to
+ * start the run. Shared by every browser suite so the flow is described once.
+ *
+ * The start button appears only once the host election settles, which takes
+ * about a second, so this waits for the button rather than the screen.
+ */
+export async function startRunAsHost(page, timeout = 20000) {
+  await page.waitForSelector('#screen-lobby:not([hidden])', { timeout });
+  await page.waitForSelector('#btn-start-run:not([hidden])', { timeout });
+  await page.click('#btn-start-run');
+  await page.waitForSelector('#screen-hud:not([hidden])', { timeout });
+}
+
+/** A peer is pulled into the run by the host's heartbeat; it never starts one. */
+export async function waitForRun(page, timeout = 20000) {
+  await page.waitForSelector('#screen-hud:not([hidden])', { timeout });
+}

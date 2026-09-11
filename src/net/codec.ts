@@ -21,6 +21,7 @@
 
 import { EnemyKind } from '../types.js';
 import { clampLevel, MAX_LEVEL } from '../sim/enemyLevels.js';
+import type { PlayerStats } from '../sim/stats.js';
 import type { Enemy, EnemySnapshot, FieldEffect, PlayerState } from '../types.js';
 
 const REC = ';';
@@ -244,29 +245,57 @@ export function decodePresence(id: string, payload: string): PresenceMsg | null 
   return { id, name: f[0]!, cls: f[1]!, host: num(f[2]!), alive: num(f[3]!) };
 }
 
-/* ------------------------------------------------------------- heartbeat */
+/* ----------------------------------------------------------- run summary */
 
-export function encodeHeartbeat(
-  hostId: string,
-  seq: number,
-  enemyCount: number,
-  wave: number,
-  paused: boolean,
-  score: number,
-): string {
-  return [hostId, seq, enemyCount, wave, paused ? 1 : 0, i(score)].join(FLD);
+/** One client's own contribution to the group totals: `shots,chips,powerUps,reboots`. */
+export function encodePlayerStats(s: PlayerStats): string {
+  return [b36(s.shots), b36(s.chips), b36(s.powerUps), b36(s.reboots)].join(FLD);
 }
 
-export function decodeHeartbeat(
-  payload: string,
-): { hostId: string; seq: number; enemyCount: number; wave: number; paused: boolean; score: number | null } | null {
+export function decodePlayerStats(payload: string): PlayerStats | null {
   const f = payload.split(FLD);
   if (f.length < 4) return null;
-  // The pause flag and the score are later additions, so both are read
-  // optionally: a client on an older build still produces a valid heartbeat, it
-  // just never pauses and reports no score. Score is `null` rather than 0 when
-  // absent, because 0 is a legitimate score and adopting it would wipe the
-  // scoreboard every beat.
+  return { shots: un36(f[0]!), chips: un36(f[1]!), powerUps: un36(f[2]!), reboots: un36(f[3]!) };
+}
+
+/* ------------------------------------------------------------- heartbeat */
+
+export interface HeartbeatStats {
+  enemyCount: number;
+  wave: number;
+  paused: boolean;
+  score: number;
+  /** True while a run is actually in progress, false while the room is a lobby. */
+  running: boolean;
+  kills: number;
+  seconds: number;
+}
+
+export function encodeHeartbeat(hostId: string, seq: number, s: HeartbeatStats): string {
+  return [
+    hostId, seq, i(s.enemyCount), i(s.wave), s.paused ? 1 : 0, i(s.score),
+    s.running ? 1 : 0, i(s.kills), i(s.seconds),
+  ].join(FLD);
+}
+
+export interface HeartbeatMsg extends Omit<HeartbeatStats, 'score' | 'running'> {
+  hostId: string;
+  seq: number;
+  /** Null when the host is on a build that does not report one — see below. */
+  score: number | null;
+  /** Null likewise; a lobby-less build is always effectively running. */
+  running: boolean | null;
+}
+
+export function decodeHeartbeat(payload: string): HeartbeatMsg | null {
+  const f = payload.split(FLD);
+  if (f.length < 4) return null;
+  // Everything past the wave is a later addition and is read optionally, so a
+  // client on an older build still produces a valid heartbeat. Score and
+  // running are `null` rather than 0/false when absent: zero is a legitimate
+  // score and adopting it every beat would wipe the board, and a missing
+  // running flag must not be read as "this room is a lobby" and strand
+  // everyone outside a live match.
   return {
     hostId: f[0]!,
     seq: num(f[1]!),
@@ -274,6 +303,9 @@ export function decodeHeartbeat(
     wave: num(f[3]!),
     paused: f.length > 4 && num(f[4]!) === 1,
     score: f.length > 5 ? num(f[5]!) : null,
+    running: f.length > 6 ? num(f[6]!) === 1 : null,
+    kills: f.length > 7 ? num(f[7]!) : 0,
+    seconds: f.length > 8 ? num(f[8]!) : 0,
   };
 }
 

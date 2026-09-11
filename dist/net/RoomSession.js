@@ -34,12 +34,23 @@ export class RoomSession {
     _isHost = false;
     joined = false;
     announcedFull = false;
+    /**
+     * Whether a run is in progress, as opposed to the room sitting in its lobby.
+     *
+     * Published on the host's heartbeat, which is what pulls everyone into a run
+     * together and, because it repeats twice a second, what lets someone who
+     * joins late walk straight into the match already underway.
+     */
+    running = false;
     /** Set by the game each tick so the heartbeat can carry live stats. */
     hostStatsProvider = () => ({
         enemyCount: 0,
         wave: 0,
         paused: false,
         score: 0,
+        running: false,
+        kills: 0,
+        seconds: 0,
     });
     constructor(net, roomId, playerId, name, cls) {
         this.net = net;
@@ -158,7 +169,13 @@ export class RoomSession {
         // Carries the pause flag, so a client joining a paused room learns about it
         // within one heartbeat instead of running while everyone else is frozen.
         this.events.emit('hostStats', {
-            enemyCount: hb.enemyCount, wave: hb.wave, paused: hb.paused, score: hb.score,
+            enemyCount: hb.enemyCount,
+            wave: hb.wave,
+            paused: hb.paused,
+            score: hb.score,
+            running: hb.running,
+            kills: hb.kills,
+            seconds: hb.seconds,
         });
         // Split brain: the lower id always wins, so step down immediately.
         if (this._isHost && hb.hostId < this.playerId) {
@@ -177,7 +194,7 @@ export class RoomSession {
         if (!this._isHost || !this.joined)
             return;
         const stats = this.hostStatsProvider();
-        this.net.publish(Topics.hostBeat(this.roomId), encodeHeartbeat(this.playerId, ++this.beatSeq, stats.enemyCount, stats.wave, stats.paused, stats.score));
+        this.net.publish(Topics.hostBeat(this.roomId), encodeHeartbeat(this.playerId, ++this.beatSeq, { ...stats, running: this.running }));
     }
     tick() {
         if (!this.joined)

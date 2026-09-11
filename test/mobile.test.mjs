@@ -57,8 +57,15 @@ check('tapping a class card selects it',
   (await page.getAttribute('.class-card[data-cls="glitcher"]', 'aria-pressed')) === 'true');
 
 await page.tap('#btn-deploy');
+await page.waitForSelector('#screen-lobby:not([hidden])', { timeout: 15000 });
+check('tapping Deploy reaches the lobby', true);
+
+// The host still has to start the run, and the button only appears once the
+// election settles.
+await page.waitForSelector('#btn-start-run:not([hidden])', { timeout: 15000 });
+await page.tap('#btn-start-run');
 await page.waitForSelector('#screen-hud:not([hidden])', { timeout: 15000 });
-check('tapping Deploy starts the match', true);
+check('tapping Start begins the match', true);
 
 await page.waitForTimeout(1200);
 

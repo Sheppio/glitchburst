@@ -375,6 +375,109 @@ body.console-platform .console-banner { display: flex; }
 
 .room-chip b { color: var(--magenta); letter-spacing: 0.22em; }
 
+/* ----------------------------------------------------------------- lobby */
+
+.panel-sub {
+  font-size: 12.5px;
+  color: var(--ink-faint);
+  line-height: 1.55;
+  margin: 0 0 20px;
+}
+
+/* The room code is the one thing a player has to read out loud to a friend,
+   so it is the largest thing on the screen. */
+.room-code-block {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  padding: 16px 18px;
+  background: var(--surface-alt);
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.room-code-label {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.room-code {
+  font-family: var(--display);
+  font-size: clamp(30px, 8vw, 44px);
+  letter-spacing: 0.16em;
+  color: var(--magenta);
+  line-height: 1;
+}
+
+.roster { display: grid; gap: 7px; margin: 20px 0 4px; }
+
+.roster-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 14px;
+  border-radius: var(--radius-sm);
+  border: 1.5px solid var(--line);
+  background: var(--surface);
+  border-left-width: 4px;
+  border-left-color: var(--slot, var(--line-strong));
+}
+
+.roster-name { font-family: var(--mono); font-size: 13px; font-weight: 700; letter-spacing: 0.06em; }
+.roster-class { font-size: 11px; color: var(--ink-faint); margin-left: auto; }
+.roster-tag {
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: var(--surface-alt);
+  border: 1px solid var(--line);
+  color: var(--ink-faint);
+}
+.roster-row.is-host .roster-tag { color: var(--amber); border-color: var(--amber); }
+
+.roster-empty {
+  font-size: 12px;
+  color: var(--ink-faint);
+  padding: 12px 2px;
+  text-align: center;
+}
+
+/* -------------------------------------------------------- squad debrief */
+
+.over-card { width: min(430px, 92vw); }
+
+.summary-heading {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin: 20px 0 8px;
+}
+
+/* Two columns of label/value pairs, so nine numbers fit on a phone without
+   turning the card into a scroll. */
+.summary {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 7px 16px;
+  margin: 0 0 6px;
+  text-align: left;
+}
+
+.summary dt { font-size: 12px; color: var(--ink-faint); }
+.summary dd {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+  text-align: right;
+}
+
 /* --------------------------------------------------------------- toggles */
 
 .toggle-list { display: grid; gap: 9px; margin-bottom: 22px; }

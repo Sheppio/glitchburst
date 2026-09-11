@@ -1,11 +1,12 @@
 import * as Phaser from 'phaser';
 import { HORDE, LIVES, NET, PLAYER, RENDER, TURN_RATE_RAD_PER_SEC, WORLD } from '../config.js';
 import { HAPTIC } from '../input/settings.js';
-import { decodeEvents, decodeField, decodeHorde, decodePause, decodeShots, decodePlayer, encodeDamage, encodeEvents, encodeField, encodeHorde, encodePause, encodePlayer, encodeShots, } from '../net/codec.js';
+import { decodeEvents, decodeField, decodeHorde, decodePause, decodeShots, decodePlayer, encodeDamage, encodeEvents, encodeField, encodeHorde, encodePause, encodePlayer, encodeShots, encodePlayerStats, decodePlayerStats, } from '../net/codec.js';
 import { Topics, segment } from '../net/topics.js';
 import { CLASSES, classDps } from '../sim/classes.js';
 import { ENEMY_DEFS } from '../sim/enemyTypes.js';
 import { clampLevel, killScore } from '../sim/enemyLevels.js';
+import { summaryRows, sumPlayerStats } from '../sim/stats.js';
 import { HordeEngine } from '../sim/HordeEngine.js';
 import { UPGRADES, UPGRADE_ORDER } from '../sim/progression.js';
 import { pickTarget } from '../sim/targeting.js';
@@ -120,6 +121,17 @@ export class GameScene extends Phaser.Scene {
     gameOver = false;
     tornDown = false;
     score = 0;
+    /** Rounds this client has fired. Pellets, not trigger pulls. */
+    shotsFired = 0;
+    /** Enemies killed in this run, room-wide. Counted by the host, published by it. */
+    kills = 0;
+    /** Run clock, in seconds. Host-authoritative like the rest of the summary. */
+    runSeconds = 0;
+    /** `performance.now()` at the previous tick, for the wall-clock run timer. */
+    runClockAt = 0;
+    /** Group run summary, keyed by player. Includes this client's own entry. */
+    playerStats = new Map();
+    statsAccumulator = 0;
     snapshotTick = 0;
     lastWave = 0;
     paused = false;
@@ -206,9 +218,19 @@ export class GameScene extends Phaser.Scene {
             wave: this.horde?.waveNumber ?? this.lastWave,
             paused: this.paused,
             score: this.score,
+            running: true,
+            kills: this.kills,
+            seconds: Math.round(this.runSeconds),
         });
-        this.unsubs.push(room.events.on('hostChange', ({ isHost, reason }) => this.onHostChange(isHost, reason)), room.events.on('hostStats', ({ wave, paused, score }) => {
+        this.unsubs.push(room.events.on('hostChange', ({ isHost, reason }) => this.onHostChange(isHost, reason)), room.events.on('hostStats', ({ wave, paused, score, kills, seconds }) => {
             this.lastWave = wave;
+            // Room-wide summary numbers come from the host for the same reason the
+            // score does: counted locally from QoS-0 events they drift apart, and
+            // a group summary that differs per screen is not a group summary.
+            if (!this.horde) {
+                this.kills = kills;
+                this.runSeconds = seconds;
+            }
             // A client that joined mid-pause, or missed the pause message, syncs here.
             if (!this.cfg.room.isHost && paused !== this.paused)
                 this.applyPause(paused, this.pausedBy);
@@ -233,11 +255,31 @@ export class GameScene extends Phaser.Scene {
         // Read pause input first: it is the one control that must keep working
         // while everything else is frozen.
         this.pollPauseInput();
-        if (this.paused) {
+        // A finished run is frozen, not merely veiled. Left running, the horde
+        // carried on swarming an empty arena behind the summary the squad is
+        // trying to read — and on the host it kept simulating and broadcasting a
+        // match nobody was playing.
+        if (this.paused || this.gameOver) {
+            // Drop the clock reference so a pause is not billed to the run when play
+            // resumes.
+            this.runClockAt = 0;
             this.pushHud();
             return;
         }
         const dt = Math.min(delta, 50) / 1000;
+        // The run clock reads `performance.now()` rather than Phaser's delta.
+        //
+        // Phaser smooths and caps the delta it hands to `update`, which is the
+        // right thing for a simulation and the wrong thing for a stopwatch: at the
+        // ~4fps this suite's software renderer manages it reported around 55ms a
+        // frame however long the frame really took, and a ten-second run timed
+        // itself at two. Clamped only against a backgrounded tab.
+        if (this.horde) {
+            const now = performance.now();
+            if (this.runClockAt > 0)
+                this.runSeconds += Math.min(now - this.runClockAt, 1000) / 1000;
+            this.runClockAt = now;
+        }
         this.updateLocalPlayer(dt);
         this.updateBullets(dt);
         this.updateEnemyBullets(dt);
@@ -251,6 +293,7 @@ export class GameScene extends Phaser.Scene {
         this.updateRemotes(delta);
         this.flushDamage(dt);
         this.publishPlayer(dt);
+        this.publishStats(dt);
         this.pushHud();
     }
     /* ------------------------------------------------------------ local play */
@@ -338,6 +381,7 @@ export class GameScene extends Phaser.Scene {
         const damage = w.damage * this.progression.progress.damageMultiplier;
         const step = w.pellets > 1 ? w.spread / (w.pellets - 1) : 0;
         const start = angle - w.spread / 2;
+        this.shotsFired += w.pellets;
         for (let n = 0; n < w.pellets; n++) {
             const a = w.pellets > 1 ? start + step * n : angle + (Math.random() - 0.5) * w.spread;
             const bullet = this.bullets.acquire();
@@ -643,6 +687,12 @@ export class GameScene extends Phaser.Scene {
         this.gameOver = true;
         this.downedFor = Infinity;
         this.me.flags = FLAG_DOWN;
+        // Stop the simulation itself, not just the rendering of it: the host tick
+        // is a timer of its own and would otherwise keep stepping and broadcasting.
+        this.stopHostLoop();
+        this.cfg.room.running = false;
+        // Get this client's final numbers out before the summary is read.
+        this.publishStatsNow();
         this.cfg.onBanner('SYSTEM FAILURE', this.cfg.room.squadSize > 1 ? 'The squad was wiped out' : 'No reboots remaining');
         // Tell the room immediately rather than waiting for the next 15Hz tick, so
         // the other clients converge on the wipe in one hop instead of two.
@@ -1059,6 +1109,13 @@ export class GameScene extends Phaser.Scene {
             const amount = Number(amountText);
             if (Number.isFinite(amount))
                 this.horde.reportDamage(enemyId, amount, attacker ?? '?');
+        }), net.subscribe(Topics.playerStatsAll(id), (topic, payload) => {
+            const playerId = segment(topic, 1);
+            if (playerId === this.me.id)
+                return; // ours is authoritative locally
+            const stats = decodePlayerStats(payload);
+            if (stats)
+                this.playerStats.set(playerId, stats);
         }), net.subscribe(Topics.playerShotsAll(id), (topic, payload) => {
             const shooter = segment(topic, 1);
             // Our own shots are already on screen.
@@ -1128,6 +1185,52 @@ export class GameScene extends Phaser.Scene {
         this.playerAccumulator %= interval;
         this.publishPlayerNow();
     }
+    /**
+     * This client's contribution to the group summary.
+     *
+     * Once a second is plenty — it is a summary, not gameplay — and because it is
+     * a full snapshot rather than a delta, a dropped message costs nothing but a
+     * second of staleness. Also published the moment a run ends, so the card the
+     * squad reads is not up to a second out of date.
+     */
+    publishStats(dt) {
+        this.statsAccumulator += dt;
+        if (this.statsAccumulator < 1)
+            return;
+        this.statsAccumulator = 0;
+        this.publishStatsNow();
+    }
+    publishStatsNow() {
+        const mine = this.myStats();
+        this.playerStats.set(this.me.id, mine);
+        this.cfg.net.publish(Topics.playerStats(this.cfg.room.roomId, this.me.id), encodePlayerStats(mine));
+    }
+    myStats() {
+        return {
+            shots: this.shotsFired,
+            chips: this.progression.progress.totalChips,
+            powerUps: this.progression.progress.powerUpsTaken,
+            reboots: this.deaths,
+        };
+    }
+    /** The finished run, as lines the failure screen can print. */
+    summaryRows() {
+        const group = this.groupStats();
+        return summaryRows(group.room, group.players);
+    }
+    /** The group totals, as shown on the failure screen. */
+    groupStats() {
+        this.playerStats.set(this.me.id, this.myStats());
+        return {
+            room: {
+                kills: this.kills,
+                wave: this.horde?.waveNumber ?? this.lastWave,
+                seconds: Math.round(this.runSeconds),
+                score: this.score,
+            },
+            players: sumPlayerStats(this.playerStats.values()),
+        };
+    }
     publishPlayerNow() {
         const room = this.cfg.room.roomId;
         this.cfg.net.publish(Topics.playerState(room, this.me.id), encodePlayer(this.me));
@@ -1180,6 +1283,7 @@ export class GameScene extends Phaser.Scene {
             this.enemies.delete(id);
         }
         this.score += killScore(def.score, clampLevel(level));
+        this.kills += 1;
         this.fx.enemyBurst(x, y, def.colour, kind === EnemyKind.TrojanTank ? 2 : 1);
         this.cfg.sfx.kill(kind === EnemyKind.TrojanTank);
         this.progression.dropFrom(x, y, def, id, clampLevel(level));
@@ -1387,6 +1491,9 @@ export class GameScene extends Phaser.Scene {
             respawnIn: Number.isFinite(this.downedFor) ? Math.max(0, this.downedFor) : 0,
             rebootsLeft: this.rebootsLeft(),
             gameOver: this.gameOver,
+            // Only assembled once the run is over: it aggregates across the roster
+            // every call, and nothing reads it until the failure screen is up.
+            summary: this.gameOver ? this.summaryRows() : [],
             players: this.cfg.room.squadSize,
             chips: this.progression.progress.chips,
             chipsPerPowerUp: Math.round(this.progression.progress.chipsNeeded),

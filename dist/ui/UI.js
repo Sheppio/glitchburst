@@ -191,7 +191,59 @@ export class UI {
     }
     setRoomCode(code) {
         this.text('room-code-label', code);
+        this.text('lobby-room-code', code);
         this.text('hud-room', code);
+    }
+    /* ----------------------------------------------------------------- lobby */
+    /**
+     * The staging area between joining a room and starting a run.
+     *
+     * Only the host can start, for the same reason only the host can pause: the
+     * horde exists on exactly one machine, and a peer "starting" would be asking
+     * for a simulation nobody is running.
+     */
+    setLobby(members, isHost) {
+        const list = this.el('lobby-roster');
+        if (!members.length) {
+            list.replaceChildren(Object.assign(document.createElement('p'), {
+                className: 'roster-empty',
+                textContent: 'Connecting…',
+            }));
+        }
+        else {
+            list.replaceChildren(...members.map((member) => {
+                const def = CLASSES[member.cls] ?? CLASSES.overclocker;
+                const row = document.createElement('div');
+                row.className = `roster-row${member.isHost ? ' is-host' : ''}`;
+                row.style.setProperty('--slot', def.cssColour);
+                const name = document.createElement('span');
+                name.className = 'roster-name';
+                name.textContent = member.isSelf ? `${member.name} (you)` : member.name;
+                const cls = document.createElement('span');
+                cls.className = 'roster-class';
+                cls.textContent = def.name;
+                row.append(name, cls);
+                if (member.isHost) {
+                    const tag = document.createElement('span');
+                    tag.className = 'roster-tag';
+                    tag.textContent = 'Host';
+                    row.append(tag);
+                }
+                return row;
+            }));
+        }
+        const start = this.el('btn-start-run');
+        start.hidden = !isHost;
+        // Until the election resolves nobody is the host, and telling the player to
+        // wait for one is misleading when they are about to *become* one.
+        const settled = members.some((m) => m.isHost);
+        this.text('lobby-status', !settled
+            ? 'Resolving authority…'
+            : isHost
+                ? members.length > 1
+                    ? `${members.length} programs staged. Start when you are ready.`
+                    : 'Start whenever you like — more can join mid-run.'
+                : 'Waiting for the host to start the run.');
     }
     setNetStatus(status, detail) {
         const pill = this.el('net-status');
@@ -237,12 +289,14 @@ export class UI {
         if (over.hidden === s.gameOver) {
             over.hidden = !s.gameOver;
             if (s.gameOver) {
-                this.text('over-wave', String(s.wave));
-                this.text('over-score', String(s.score));
-                this.text('over-chips', String(s.chips));
                 this.text('over-reason', s.rebootsLeft === null ? 'The squad was wiped out' : 'All reboots exhausted');
             }
         }
+        // Redrawn while the card is up rather than once on death: a squadmate's
+        // final numbers can still be in flight when the run ends, so the totals
+        // settle over the first second the card is open.
+        if (s.gameOver)
+            this.renderSummary(s.summary);
         this.text('chips-count', `${s.chips} / ${s.chipsPerPowerUp}`);
         this.el('chips-fill').style.width = `${(s.chips / Math.max(1, s.chipsPerPowerUp)) * 100}%`;
         this.renderUpgrades(s.upgrades);
@@ -264,6 +318,21 @@ export class UI {
         this.el('chip-automove').setAttribute('aria-pressed', String(this.settings.current.autoMove));
         this.syncInGameMenu();
         this.renderSquad(s.squad);
+    }
+    /** The group debrief. Signature-guarded, since this runs every frame. */
+    renderSummary(rows) {
+        const host = this.el('over-summary');
+        const signature = rows.map((r) => `${r.label}${r.value}`).join('|');
+        if (host.dataset['sig'] === signature)
+            return;
+        host.dataset['sig'] = signature;
+        host.replaceChildren(...rows.flatMap((row) => {
+            const dt = document.createElement('dt');
+            dt.textContent = row.label;
+            const dd = document.createElement('dd');
+            dd.textContent = row.value;
+            return [dt, dd];
+        }));
     }
     /** Stack counts per upgrade. Dimmed until the player owns at least one. */
     renderUpgrades(upgrades) {
@@ -566,7 +635,9 @@ export class UI {
         this.on('btn-leave', () => this.callbacks.onLeave());
         // Assists are the difference between playable and unplayable on a phone,
         // so they are reachable mid-match rather than only from the settings menu.
-        this.on('btn-again', () => this.callbacks.onPlayAgain());
+        this.on('btn-start-run', () => this.callbacks.onStartRun());
+        this.on('btn-lobby-leave', () => this.callbacks.onLeave());
+        this.on('btn-to-lobby', () => this.callbacks.onReturnToLobby());
         this.on('btn-over-leave', () => this.callbacks.onLeave());
         this.on('btn-pause', () => this.callbacks.onTogglePause());
         this.on('btn-resume', () => this.callbacks.onTogglePause());

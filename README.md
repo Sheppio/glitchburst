@@ -1,6 +1,6 @@
 # GLITCHBURST
 
-<!-- version -->**v0.2.17**<!-- /version --> — the build currently on Pages.
+<!-- version -->**v0.2.18**<!-- /version --> — the build currently on Pages.
 
 A co-op top-down horde shooter that runs entirely in the browser. **No game server.**
 Every client talks to a public MQTT broker over WebSockets, and one of them
@@ -38,7 +38,7 @@ Developing needs the compiler:
 ```bash
 npm install
 npm run watch      # tsc --watch, rebuilding dist/ on save
-npm test           # 269 tests: simulation, codec, single client, mobile, controller, two clients
+npm test           # 292 tests: simulation, codec, single client, mobile, controller, two clients
 ```
 
 `dist/` is committed on purpose — it is what GitHub Pages serves.
@@ -343,6 +343,49 @@ Chips accelerate toward you without damping once they latch on. That asymmetry
 is deliberate: you have a top speed and a chip does not, so a chip can never be
 outrun.
 
+## The lobby
+
+A room is a **place**, not a single match. Creating or joining one lands you in
+a staging area with the room code, the roster, and — for the host — a Start
+button. Runs are created and destroyed inside that room; the broker connection
+and the roster outlive them, which is what makes coming back to a populated
+lobby possible at all rather than a round trip through the main menu.
+
+**The host's heartbeat carries whether the room is playing.** Everyone who is
+not already in a run and hears `running` starts one, which makes the start
+button and the entire late-join story the same mechanism: someone arriving
+mid-match sees the flag within half a second and walks straight into the wave,
+which the horde snapshot then materialises around them. Only the host can start,
+for the same reason only the host can pause — the horde exists on exactly one
+machine, and a peer "starting" would be asking for a simulation nobody is
+running.
+
+### The debrief
+
+A finished run is **frozen, not veiled**: the host tick is stopped and the
+update loop returns early, because a horde still swarming behind the summary is
+both a distraction and, on the host, a match nobody is playing still being
+simulated and broadcast.
+
+The summary is **the squad's, never per player**. This is a co-op game; splitting
+it turns "how did we do" into "who carried", which is the wrong question to
+leave a room on. The numbers come from two places for a reason:
+
+| | Source | Why |
+| --- | --- | --- |
+| Rounds fired, chips, upgrades, reboots | each client publishes its own, once a second; everyone sums | only your own client knows them |
+| Kills, wave, uptime, score | the host, on the heartbeat | counted locally from QoS-0 events they drift apart, and a group summary that differs per screen is not a group summary |
+
+The run clock reads `performance.now()` rather than Phaser's frame delta.
+Phaser smooths and caps the delta it hands to `update` — correct for a
+simulation, wrong for a stopwatch: at the ~4fps a software renderer manages it
+reported about 55ms a frame however long the frame really took, and timed a
+ten-second run at two.
+
+Hit rate is capped at 100%. Kills arrive from the host while shots are summed
+across clients, so a late publish can briefly make kills the larger number, and
+a card claiming 140% reads as broken even though nothing is wrong.
+
 ## Reboots
 
 Solo and squad play fail differently, so they get different rules.
@@ -646,28 +689,28 @@ for a game — just don't build anything that needs privacy on top of it.
 npm test
 ```
 
-269 checks across five suites. The browser suites vendor Phaser locally and
+292 checks across five suites. The browser suites vendor Phaser locally and
 swap MQTT for a loopback stub that relays over `BroadcastChannel`, so two tabs
 share one "broker" and a real multi-client room can be tested offline.
 
-- **`sim.test.mjs`** (167) — codec round-trips, truncation tolerance, payload
+- **`sim.test.mjs`** (184) — codec round-trips, truncation tolerance, payload
   size at the cap, enemy cap, difficulty scaling, wave pacing, damage
   attribution, steering, decoy priority, host adoption, shockwave, progression
   and upgrade caps, deterministic drop rolls, turn-rate limiting, the auto-aim
   scoring formula, enemy levels and their health/reward curves, wave streaming
   and the tempo floor, the autopilot's steering bands and its survival against a
   live horde, and the audio volume curve.
-- **`smoke.test.mjs`** (41) — menus, settings persistence and migration, Phaser
+- **`smoke.test.mjs`** (43) — menus, settings persistence and migration, Phaser
   boot, election, 20 Hz batching, attacker-authority kills, point-blank hits,
   chip pickup and conversion, turn rate, abilities, pause, settings over a live
   match, and broadcast rate under a starved renderer.
-- **`gamepad.test.mjs`** (12) — the whole front end driven by a virtual pad and
+- **`gamepad.test.mjs`** (13) — the whole front end driven by a virtual pad and
   nothing else: no click, no keypress. Menu to match, the on-screen keyboard,
   the pause card, a slider, and back out again.
-- **`mobile.test.mjs`** (14) — an emulated Pixel with a touchscreen and no
+- **`mobile.test.mjs`** (15) — an emulated Pixel with a touchscreen and no
   mouse: taps through the whole flow, and hit-tests that nothing invisible is
   covering the buttons.
-- **`multiplayer.test.mjs`** (35) — two clients: election, peer unpacking,
+- **`multiplayer.test.mjs`** (37) — two clients: election, peer unpacking,
   mid-game join, interpolation, squad scaling, seeing each other's fire, pause
   propagation, and **host failover** with the horde carried through.
 
