@@ -806,10 +806,71 @@ export class GameScene extends Phaser.Scene {
   }
 
   private rebootDelay(): number {
+    // Solo is flat: the pool of three reboots is already the escalating cost,
+    // and a rising timer on top charges twice for the same mistake.
+    if (this.cfg.room.squadSize <= 1) return LIVES.soloRebootSec;
     return Math.min(
       LIVES.rebootMaxSec,
       LIVES.rebootBaseSec + (this.deaths - 1) * LIVES.rebootStepSec,
     );
+  }
+
+  /**
+   * Squared distance from a point to the nearest enemy on screen.
+   *
+   * Read off the sprites rather than the simulation, so it is the same answer
+   * on the host and on a peer — a peer has no `HordeEngine`, but it has every
+   * enemy's interpolated position, which is what the player can actually see.
+   */
+  private nearestEnemyDist2(x: number, y: number): number {
+    let nearest = Infinity;
+    for (const view of this.enemies.values()) {
+      const d2 = dist2(x, y, view.sprite.x, view.sprite.y);
+      if (d2 < nearest) nearest = d2;
+    }
+    return nearest;
+  }
+
+  /**
+   * Somewhere safe to come back.
+   *
+   * Rebooting inside the swarm that just killed you spends the reboot on
+   * nothing, which is the same reasoning that made reboots restore full health
+   * — and at the enemy cap the odds of your corpse being surrounded are high.
+   *
+   * Searched as rings expanding from where you fell, so you return to the same
+   * part of the arena: near your squad, near whatever you were defending, and
+   * not teleported across the map for no reason. The first clear point wins, so
+   * the common case is a short hop rather than the furthest corner.
+   */
+  private safeRespawnPoint(): Vec2 {
+    const safe2 = LIVES.rebootSafeRadius * LIVES.rebootSafeRadius;
+
+    let best = { x: this.me.x, y: this.me.y };
+    let bestClearance = this.nearestEnemyDist2(best.x, best.y);
+    if (bestClearance >= safe2) return best;
+
+    const samples = 12;
+    for (const radius of [280, 440, 640, 880, 1150]) {
+      for (let n = 0; n < samples; n++) {
+        // Offset each ring so successive rings do not sample the same bearings
+        // and miss a gap between them.
+        const angle = (Math.PI * 2 * n) / samples + radius;
+        const x = clamp(this.me.x + Math.cos(angle) * radius, 60, WORLD.width - 60);
+        const y = clamp(this.me.y + Math.sin(angle) * radius, 60, WORLD.height - 60);
+
+        const clearance = this.nearestEnemyDist2(x, y);
+        if (clearance >= safe2) return { x, y };
+        if (clearance > bestClearance) {
+          bestClearance = clearance;
+          best = { x, y };
+        }
+      }
+    }
+
+    // Nothing in range is genuinely clear — a hundred enemies cover a lot of
+    // arena. Come back at the roomiest spot found rather than where you fell.
+    return best;
   }
 
   private respawn(): void {
@@ -819,6 +880,20 @@ export class GameScene extends Phaser.Scene {
     this.me.flags = 0;
     this.downedFor = 0;
     this.sinceDamage = PLAYER.regenDelaySec;
+
+    const spot = this.safeRespawnPoint();
+    const relocated = dist2(spot.x, spot.y, this.me.x, this.me.y) > 1;
+    this.me.x = spot.x;
+    this.me.y = spot.y;
+    if (relocated) {
+      // Snap both the sprite and the camera. The camera follows with a lerp,
+      // which would otherwise pan across the arena showing the player a long
+      // slow slide instead of a reboot.
+      this.player.setPosition(spot.x, spot.y);
+      this.cameras.main.centerOn(spot.x, spot.y);
+      this.cfg.onBanner('REBOOTED', 'Relocated clear of hostiles');
+    }
+
     this.fx.ring(this.me.x, this.me.y, 160, this.def.colour, 500);
     this.publishPlayerNow();
   }

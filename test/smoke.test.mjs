@@ -1,5 +1,6 @@
 import { buildRig, launch, reporter, startServer } from './rig.mjs';
 import { UPGRADE_ORDER } from '../dist/sim/progression.js';
+import { LIVES, WORLD } from '../dist/config.js';
 
 /**
  * The observable effect of each upgrade.
@@ -744,7 +745,7 @@ await step('a reboot restores full health', async () => {
   return { ok: out.hp === out.max, note: `${out.hp}/${out.max}` };
 });
 
-await step('a solo run ends after three reboots, each slower than the last', async () => {
+await step('a solo run ends after three reboots, each the same flat wait', async () => {
   const out = await page.evaluate(async () => {
     const scene = window.glitchburst.game.scene.getScene('game');
     clearInterval(window.__keepAlive);
@@ -769,10 +770,107 @@ await step('a solo run ends after three reboots, each slower than the last', asy
     return { delays, over, veiled };
   });
 
-  const escalates = out.delays[0] === 5 && out.delays[1] === 8 && out.delays[2] === 11;
+  // Flat, not escalating: solo already pays for each death with one of three
+  // reboots, and a rising timer on top charges twice for the same mistake.
+  const flat = out.delays.slice(0, 3).every((d) => d === LIVES.soloRebootSec);
   return {
-    ok: escalates && out.delays[3] === 'run over' && out.over,
+    ok: flat && out.delays[3] === 'run over' && out.over,
     note: `${out.delays.join('s, ')}${out.veiled ? ' (failure screen shown)' : ''}`,
+  };
+});
+
+await step('a reboot never puts you back inside the swarm', async () => {
+  const out = await page.evaluate(async ({ safe, world }) => {
+    const scene = window.glitchburst.game.scene.getScene('game');
+    clearInterval(window.__keepAlive);
+
+    // Bury the player: a ring of enemies right on top of them, which is what a
+    // death at the cap actually looks like.
+    //
+    // The engine enemy, the view's network target and the sprite all have to be
+    // moved together. Moving only the sprite fights the interpolation — it
+    // glides straight back toward the target it was given, and the relocation
+    // is then measured against positions that have already changed.
+    const x = scene.me.x;
+    const y = scene.me.y;
+    for (const [id, view] of scene.enemies) {
+      const a = Math.random() * Math.PI * 2;
+      const r = Math.random() * 170;
+      const ex = x + Math.cos(a) * r;
+      const ey = y + Math.sin(a) * r;
+      view.tx = ex;
+      view.ty = ey;
+      view.sprite.setPosition(ex, ey);
+      const live = scene.horde?.enemies.get(id);
+      if (live) { live.x = ex; live.y = ey; live.stun = 5; }
+    }
+    const buried = scene.enemies.size;
+
+    const nearest = (px, py) => {
+      let best = Infinity;
+      for (const v of scene.enemies.values()) {
+        const d = Math.hypot(px - v.sprite.x, py - v.sprite.y);
+        if (d < best) best = d;
+      }
+      return best;
+    };
+    const before = nearest(x, y);
+
+    scene.deaths = 0;
+    scene.gameOver = false;
+    scene.me.hp = scene.me.maxHp;
+    scene.takeDamage(99999);
+    scene.downedFor = 0.01;
+    await new Promise((r) => requestAnimationFrame(r));
+    await new Promise((r) => requestAnimationFrame(r));
+
+    const after = nearest(scene.me.x, scene.me.y);
+    const moved = Math.hypot(scene.me.x - x, scene.me.y - y);
+    const inArena =
+      scene.me.x > 0 && scene.me.y > 0 && scene.me.x < world.width && scene.me.y < world.height;
+
+    scene.deaths = 0;
+    scene.gameOver = false;
+    scene.downedFor = 0;
+    scene.me.hp = scene.me.maxHp;
+    window.__keepAlive = setInterval(() => { scene.me.hp = scene.me.maxHp; }, 100);
+
+    // And the clamping path: dying in a corner means half the search ring is
+    // outside the arena, and a relocation must never land there.
+    scene.me.x = 30;
+    scene.me.y = 30;
+    for (const [id, view] of scene.enemies) {
+      view.tx = 60; view.ty = 60;
+      view.sprite.setPosition(60, 60);
+      const live = scene.horde?.enemies.get(id);
+      if (live) { live.x = 60; live.y = 60; live.stun = 5; }
+    }
+    scene.deaths = 0;
+    scene.gameOver = false;
+    scene.me.hp = scene.me.maxHp;
+    scene.takeDamage(99999);
+    scene.downedFor = 0.01;
+    await new Promise((r) => requestAnimationFrame(r));
+    await new Promise((r) => requestAnimationFrame(r));
+    const corner = {
+      x: scene.me.x,
+      y: scene.me.y,
+      clear: nearest(scene.me.x, scene.me.y),
+      inArena:
+        scene.me.x > 0 && scene.me.y > 0 && scene.me.x < world.width && scene.me.y < world.height,
+    };
+
+    return { buried, before, after, moved, inArena, corner };
+  }, { safe: LIVES.rebootSafeRadius, world: { width: WORLD.width, height: WORLD.height } });
+
+  const safe = LIVES.rebootSafeRadius;
+  const cornerOk =
+    out.corner.inArena && Number.isFinite(out.corner.x) && out.corner.clear >= safe;
+  return {
+    ok: out.buried > 4 && out.before < safe && out.after >= safe && out.inArena && cornerOk,
+    note: out.before >= safe
+      ? 'could not bury the player to set the test up'
+      : `${out.buried} hostiles on the corpse, nearest ${out.before.toFixed(0)}px → ${out.after.toFixed(0)}px after a ${out.moved.toFixed(0)}px relocation; from a corner → ${out.corner.clear.toFixed(0)}px clear at (${out.corner.x.toFixed(0)}, ${out.corner.y.toFixed(0)})`,
   };
 });
 

@@ -1,6 +1,6 @@
 # GLITCHBURST
 
-<!-- version -->**v0.2.11**<!-- /version --> — the build currently on Pages.
+<!-- version -->**v0.2.12**<!-- /version --> — the build currently on Pages.
 
 A co-op top-down horde shooter that runs entirely in the browser. **No game server.**
 Every client talks to a public MQTT broker over WebSockets, and one of them
@@ -38,7 +38,7 @@ Developing needs the compiler:
 ```bash
 npm install
 npm run watch      # tsc --watch, rebuilding dist/ on save
-npm test           # 228 tests: simulation, codec, single client, mobile, two clients
+npm test           # 229 tests: simulation, codec, single client, mobile, two clients
 ```
 
 `dist/` is committed on purpose — it is what GitHub Pages serves.
@@ -335,11 +335,36 @@ damage race the player generally wins; regen that waits until you have
 disengaged rewards backing off, which is the decision worth encouraging when
 outnumbered. The Self Repair upgrade adds to that rate.
 
-Either way, **each reboot takes longer than the last** — five seconds, then
-eight, then eleven, capped at twenty. That escalation is the real difficulty
-curve: a flat delay makes dying nearly free by the tenth time, while a rising
-one lets a bad run compound without ever hard-stopping a squad that is still
-fighting.
+The wait differs by mode, for the same reason the life rules do.
+
+**Solo is a flat three seconds**, every time. The pool of three reboots is
+already the escalating cost — each death is measurably closer to the end of the
+run — and stacking a rising timer on top charges twice for the same mistake, in
+the worst currency there is: sitting watching.
+
+**In a squad each reboot takes longer than the last** — five seconds, then
+eight, then eleven, capped at twenty. There reboots are not counted at all, so
+the timer *is* the cost: a flat delay would make dying nearly free by the tenth
+time, while a rising one lets a bad run compound without ever hard-stopping a
+team that is still fighting.
+
+### Coming back somewhere survivable
+
+A reboot never drops you back inside the swarm. If the nearest hostile is within
+**300px**, you are relocated to the closest point that is clear of them.
+
+Same reasoning as the full-health restore: materialising inside the ring that
+just killed you spends the reboot on nothing, and at the enemy cap the odds of
+your corpse being surrounded are high. 300px buys over a second even against the
+fastest kind — enough to pick a direction.
+
+The search is rings expanding from where you fell, first clear point wins, so
+the usual result is a short hop rather than a trip to the far corner: you come
+back near your squad and near whatever you were defending. If *nothing* within
+range is clear — a hundred enemies cover a lot of arena — you get the roomiest
+spot found rather than the spot you died on. Clearance is measured off the enemy
+sprites rather than the simulation, so a peer with no `HordeEngine` computes the
+same answer from what is actually on its screen.
 
 ## Wave pacing
 
@@ -524,7 +549,7 @@ for a game — just don't build anything that needs privacy on top of it.
 npm test
 ```
 
-228 checks across four suites. The browser suites vendor Phaser locally and
+229 checks across four suites. The browser suites vendor Phaser locally and
 swap MQTT for a loopback stub that relays over `BroadcastChannel`, so two tabs
 share one "broker" and a real multi-client room can be tested offline.
 
@@ -534,7 +559,7 @@ share one "broker" and a real multi-client room can be tested offline.
   and upgrade caps, deterministic drop rolls, turn-rate limiting, the auto-aim
   scoring formula, enemy levels and their health/reward curves, wave streaming
   and the tempo floor, and the audio volume curve.
-- **`smoke.test.mjs`** (38) — menus, settings persistence and migration, Phaser
+- **`smoke.test.mjs`** (39) — menus, settings persistence and migration, Phaser
   boot, election, 20 Hz batching, attacker-authority kills, point-blank hits,
   chip pickup and conversion, turn rate, abilities, pause, settings over a live
   match, and broadcast rate under a starved renderer.

@@ -143,18 +143,37 @@ export const LIVES = {
    * the limit entirely.
    */
   soloReboots: 3,
-  /** First reboot takes this long. */
+  /**
+   * Solo reboots are a flat wait, not an escalating one.
+   *
+   * On your own the pool of three *is* the escalating cost — every death is
+   * measurably closer to the end of the run. Stacking a rising timer on top of
+   * that charges twice for the same mistake, and the second charge is the worst
+   * kind: sitting watching. Short enough to get straight back in.
+   */
+  soloRebootSec: 3,
+  /** First reboot takes this long. Squad play only; solo uses the flat wait. */
   rebootBaseSec: 5,
   /**
    * Each subsequent reboot adds this much.
    *
-   * Escalation is the actual difficulty curve here: a flat delay means dying is
-   * nearly free by the tenth time, while a rising one makes a bad run compound
-   * without ever hard-stopping a squad that is still fighting.
+   * Escalation is the difficulty curve for a *squad*, where reboots are not
+   * counted at all: a flat delay would make dying nearly free by the tenth
+   * time, while a rising one makes a bad run compound without ever
+   * hard-stopping a team that is still fighting.
    */
   rebootStepSec: 3,
   /** Ceiling, so a long squad run cannot leave someone watching for a minute. */
   rebootMaxSec: 20,
+  /**
+   * A reboot places you at least this far from the nearest hostile.
+   *
+   * Coming back inside the swarm that just killed you spends the reboot on
+   * nothing — the same reasoning that made reboots restore full health. At this
+   * range even the fastest kind needs over a second to reach you, which is
+   * enough to pick a direction.
+   */
+  rebootSafeRadius: 300,
 } as const;
 
 export const PLAYER = {
