@@ -22,6 +22,7 @@ export const TEX = {
   powerUp: (id: string) => `tex-powerup-${id}`,
   grid: 'tex-grid',
   vignette: 'tex-vignette',
+  marker: 'tex-marker',
 } as const;
 
 /**
@@ -54,6 +55,8 @@ export function createTextures(scene: Phaser.Scene): void {
   // double the display list at the 100-enemy cap and add a position to sync
   // every frame, to save a few hundred KB of texture memory we are not short
   // of.
+  drawMarker(scene);
+
   for (let level = 1; level <= MAX_LEVEL; level++) {
     drawBug(scene, level);
     drawDrone(scene, level);
@@ -181,6 +184,41 @@ function drawPlayer(scene: Phaser.Scene, cls: string, colour: number, radius: nu
   g.fillStyle(0xffffff, 0.9).fillCircle(c - radius * 0.25, c, radius * 0.3);
 
   g.generateTexture(TEX.player(cls), size, size);
+  g.destroy();
+}
+
+/**
+ * Off-screen indicator: a chevron, drawn pointing right so a sprite rotation
+ * of zero points the way the marker's own angle expects.
+ *
+ * White-cored with a dark rim for the same reason the level pips have a halo —
+ * it is tinted per teammate and has to stay legible over the arena grid, the
+ * vignette and whatever is happening underneath it.
+ */
+function drawMarker(scene: Phaser.Scene): void {
+  const g = scene.make.graphics({ x: 0, y: 0 }, false);
+  const w = 28;
+  const h = 22;
+
+  g.fillStyle(0x0b1017, 0.25);
+  g.beginPath();
+  g.moveTo(w, h / 2);
+  g.lineTo(3, 1);
+  g.lineTo(9, h / 2);
+  g.lineTo(3, h - 1);
+  g.closePath();
+  g.fillPath();
+
+  g.fillStyle(0xffffff, 1);
+  g.beginPath();
+  g.moveTo(w - 2, h / 2);
+  g.lineTo(5.5, 3.5);
+  g.lineTo(11, h / 2);
+  g.lineTo(5.5, h - 3.5);
+  g.closePath();
+  g.fillPath();
+
+  g.generateTexture(TEX.marker, w, h);
   g.destroy();
 }
 

@@ -23,6 +23,7 @@ import { CLASSES, CLASS_ORDER, classDps, weaponRange } from '../dist/sim/classes
 import { Pool } from '../dist/render/pool.js';
 import { fadeOut } from '../dist/render/lerp.js';
 import { orderSquad } from '../dist/render/squadOrder.js';
+import { edgeMarker } from '../dist/render/edgeMarkers.js';
 import {
   accuracy, EMPTY_PLAYER_STATS, formatDuration, summaryRows, sumPlayerStats,
 } from '../dist/sim/stats.js';
@@ -379,6 +380,60 @@ const run = (engine, seconds, t = targets(1)) => {
     .map((l) => fadeOut(l, 0.3))
     .every((v, i, a) => i === 0 || v <= a[i - 1]));
   check('a zero lifetime cannot divide by zero', fadeOut(1, 0) === 1);
+}
+
+/* --------------------------------------------------------- edge markers */
+
+{
+  // A 1000x600 window onto the arena, its top-left at (1000, 800).
+  const view = { x: 1000, y: 800, width: 1000, height: 600 };
+  const margin = 24;
+  const deg = (rad) => Math.round((rad * 180) / Math.PI);
+
+  check('anything on screen needs no marker',
+    edgeMarker({ x: 1500, y: 1100 }, view, margin) === null);
+  check('the very edge of the view still counts as on screen',
+    edgeMarker({ x: 2000, y: 1400 }, view, margin) === null);
+
+  const right = edgeMarker({ x: 4000, y: 1100 }, view, margin);
+  check('something due right is marked on the right edge, pointing right',
+    right !== null && deg(right.angle) === 0 && Math.round(right.x) === view.width - margin,
+    right ? `at x=${Math.round(right.x)} of ${view.width}, ${deg(right.angle)} degrees` : 'no marker');
+  check('and vertically centred when it is level with you', Math.round(right.y) === view.height / 2);
+
+  const up = edgeMarker({ x: 1500, y: -400 }, view, margin);
+  check('something straight up is marked on the top edge',
+    deg(up.angle) === -90 && Math.round(up.y) === margin);
+
+  // The inset is the whole point: on the edge itself the arrow is half clipped
+  // by the viewport, which reads as a rendering fault rather than a pointer.
+  // Measured from the centre of the *view*, world (1500, 1100) — not from the
+  // origin, so a true diagonal is centre plus an equal offset on both axes.
+  const corner = edgeMarker({ x: 1500 + 4000, y: 1100 + 4000 }, view, margin);
+  check('a marker never leaves the inset rectangle',
+    corner.x <= view.width - margin + 0.01 && corner.y <= view.height - margin + 0.01 &&
+    corner.x >= margin - 0.01 && corner.y >= margin - 0.01,
+    `(${Math.round(corner.x)}, ${Math.round(corner.y)}) inside a ${margin}px inset`);
+  check('a corner target points diagonally', deg(corner.angle) === 45);
+
+  // The ray leaves through the nearer axis, so a target far along one axis and
+  // slightly off the other pins to the edge it actually crosses.
+  const shallow = edgeMarker({ x: 6000, y: 1250 }, view, margin);
+  check('the marker sits on the edge the sight line actually crosses',
+    Math.round(shallow.x) === view.width - margin && shallow.y > view.height / 2,
+    `(${Math.round(shallow.x)}, ${Math.round(shallow.y)})`);
+
+  check('distance comes back for anything that wants to fade with range',
+    right.distance > 0 && up.distance > 0);
+
+  // Degenerate input must not produce a NaN position — it would put a sprite
+  // somewhere undrawable and silently lose the marker.
+  const odd = [
+    edgeMarker({ x: 1500, y: 1100 }, { x: 1000, y: 800, width: 0, height: 0 }, margin),
+    edgeMarker({ x: 5000, y: 1100 }, { x: 1000, y: 800, width: 10, height: 10 }, 99),
+  ];
+  check('a degenerate view cannot produce a NaN marker',
+    odd.every((m) => m === null || (Number.isFinite(m.x) && Number.isFinite(m.y))));
 }
 
 /* ---------------------------------------------------------- run summary */

@@ -211,6 +211,48 @@ check('peer publishes no horde snapshots', bState.hordePublished === 0);
     `peer sees ${onPeer} rounds fired across the room, having fired 300 itself`);
 }
 
+/* --------------------------------------------------------- edge markers */
+
+{
+  // The arena is far bigger than the camera, so most of the time your squad is
+  // somewhere you cannot see. Without a pointer the only way to regroup is to
+  // guess a direction and run.
+  await a.bringToFront();
+  const out = await a.evaluate(async () => {
+    const scene = window.glitchburst.game.scene.getScene('game');
+    const remote = [...scene.remotes.values()][0];
+    if (!remote) return { why: 'no teammate' };
+
+    // Put the teammate far off screen, down and to the right. The camera
+    // follows with a lerp, so it is snapped rather than waited on — otherwise
+    // the teammate is still in shot when the markers are read and the test
+    // measures the camera's easing instead of the marker.
+    remote.state.x = 2300;
+    remote.state.y = 1500;
+    scene.me.x = 300;
+    scene.me.y = 300;
+    scene.cameras.main.centerOn(300, 300);
+    await new Promise((r) => setTimeout(r, 400));
+
+    const shown = scene.markers.items.filter((m) => m.sprite.visible);
+    const view = scene.cameras.main.worldView;
+    return {
+      count: shown.length,
+      // Pointing down-right, which is where the teammate actually is.
+      angles: shown.map((m) => Math.round((m.sprite.rotation * 180) / Math.PI)),
+      // And pinned inside the viewport, not drawn at the teammate's position.
+      inside: shown.every(
+        (m) => m.sprite.x >= 0 && m.sprite.x <= view.width && m.sprite.y >= 0 && m.sprite.y <= view.height,
+      ),
+      pinned: shown.every((m) => m.sprite.scrollFactorX === 0),
+    };
+  });
+
+  check('an off-screen teammate gets an arrow at the screen edge',
+    out.count >= 1 && out.inside && out.pinned && out.angles.some((d) => d > 0 && d < 90),
+    out.why ?? `${out.count} marker(s) at ${out.angles.join(', ')} degrees, pinned to the viewport`);
+}
+
 /* -------------------------------------------------------- interpolation */
 
 const drift = await b.evaluate(async () => {

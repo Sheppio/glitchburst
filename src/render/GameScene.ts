@@ -42,6 +42,7 @@ import { DAMAGE_RED, Fx } from './fx.js';
 import { fadeOut, glide, smoothing } from './lerp.js';
 import { Pool } from './pool.js';
 import { orderSquad } from './squadOrder.js';
+import { edgeMarker } from './edgeMarkers.js';
 import { ProgressionSystem } from './Progression.js';
 import { TEX } from './textures.js';
 
@@ -214,6 +215,18 @@ export class GameScene extends Phaser.Scene {
     sprite: this.add.image(0, 0, TEX.bullet).setDepth(25),
     x: 0, y: 0, vx: 0, vy: 0, life: 0, maxLife: 1, damage: 0, pierce: 1, radius: 5, knockback: 0,
     hit: new Set(), active: false,
+  }));
+
+  /**
+   * Off-screen indicators for teammates and power-ups.
+   *
+   * Screen-space: `setScrollFactor(0)` pins them to the camera, so the same
+   * sprite is drawn at a screen coordinate rather than a world one and nothing
+   * has to be converted back every frame.
+   */
+  private markers = new Pool<{ sprite: Phaser.GameObjects.Image; active: boolean }>(() => ({
+    sprite: this.add.image(0, 0, TEX.marker).setDepth(60).setScrollFactor(0).setVisible(false),
+    active: false,
   }));
 
   private enemyBullets = new Pool<EnemyBullet>(() => ({
@@ -416,6 +429,9 @@ export class GameScene extends Phaser.Scene {
       // Drop the clock reference so a pause is not billed to the run when play
       // resumes.
       this.runClockAt = 0;
+      // Markers are drawn screen-space and would otherwise sit frozen on top of
+      // the pause card and the failure summary.
+      this.updateMarkers();
       this.pushHud();
       return;
     }
@@ -448,6 +464,7 @@ export class GameScene extends Phaser.Scene {
     this.drawHealthBars();
 
     this.updateRemotes(delta);
+    this.updateMarkers();
     this.flushDamage(dt);
     this.publishPlayer(dt);
     this.publishStats(dt);
@@ -1508,6 +1525,50 @@ export class GameScene extends Phaser.Scene {
     if (this.outboundShots.length) {
       this.cfg.net.publish(Topics.playerShots(room, this.me.id), encodeShots(this.outboundShots));
       this.outboundShots.length = 0;
+    }
+  }
+
+  /**
+   * Draw an arrow at the screen edge for everything worth knowing about that is
+   * currently off screen.
+   *
+   * Teammates take their class colour, so a glance tells you *who* is over
+   * there. Power-ups get a muted grey: they are worth knowing about, not worth
+   * pulling your eye off whatever is shooting at you.
+   */
+  private updateMarkers(): void {
+    for (const marker of this.markers.items) {
+      marker.active = false;
+      marker.sprite.setVisible(false);
+    }
+    // Cleared, then left cleared: a frozen or veiled game has nothing to point
+    // at, and arrows over a summary card are just clutter.
+    if (this.gameOver || this.paused) return;
+
+    const view = this.cameras.main.worldView;
+    const place = (at: Vec2, colour: number, alpha: number): void => {
+      const found = edgeMarker(at, view, RENDER.markerMargin);
+      if (!found) return;
+      const marker = this.markers.acquire();
+      marker.active = true;
+      marker.sprite
+        .setPosition(found.x, found.y)
+        .setRotation(found.angle)
+        .setTint(colour)
+        .setAlpha(alpha)
+        .setVisible(true);
+    };
+
+    for (const remote of this.remotes.values()) {
+      const def = CLASSES[remote.state.cls] ?? CLASSES.overclocker;
+      // A downed teammate is the one you most want to find, so they are not
+      // hidden — just dimmed, the way their sprite is.
+      const downed = (remote.state.flags & FLAG_DOWN) !== 0;
+      place(remote.state, def.colour, downed ? 0.45 : 0.95);
+    }
+
+    for (const powerUp of this.progression.powerUps.items) {
+      if (powerUp.active) place(powerUp, RENDER.markerPowerUpColour, RENDER.markerPowerUpAlpha);
     }
   }
 

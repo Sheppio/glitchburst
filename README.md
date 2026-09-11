@@ -1,6 +1,6 @@
 # GLITCHBURST
 
-<!-- version -->**v0.2.18**<!-- /version --> — the build currently on Pages.
+<!-- version -->**v0.2.19**<!-- /version --> — the build currently on Pages.
 
 A co-op top-down horde shooter that runs entirely in the browser. **No game server.**
 Every client talks to a public MQTT broker over WebSockets, and one of them
@@ -38,7 +38,7 @@ Developing needs the compiler:
 ```bash
 npm install
 npm run watch      # tsc --watch, rebuilding dist/ on save
-npm test           # 292 tests: simulation, codec, single client, mobile, controller, two clients
+npm test           # 303 tests: simulation, codec, single client, mobile, controller, two clients
 ```
 
 `dist/` is committed on purpose — it is what GitHub Pages serves.
@@ -216,6 +216,21 @@ is useless exactly when the ability matters, since no plausible factor makes a
 decoy 700px away beat a player the enemy is already touching.
 
 ### Reading the fight
+
+### Off-screen markers
+
+The arena is 2400x1600 and the camera shows a fraction of it, so most of the
+time your squad is somewhere you cannot see. Small chevrons sit at the screen
+edge pointing at **teammates**, tinted with their class colour so a glance tells
+you *who* is over there, and at **power-ups** in a muted grey — worth knowing
+about, not worth pulling your eye off whatever is shooting at you. A downed
+teammate is dimmed rather than hidden: that is the one you most want to find.
+
+A marker is placed where the ray from the middle of the screen to the target
+crosses an *inset* rectangle. On the edge itself half the arrow is clipped by
+the viewport, which reads as a rendering fault rather than as a pointer. They
+are screen-space (`setScrollFactor(0)`), and cleared entirely while paused or
+after a run ends — arrows frozen over a summary card are just clutter.
 
 Squad health bars are listed **you first, then the host, then join order**.
 Your own bar is the one you glance at mid-fight, so it holds still at the top
@@ -689,11 +704,11 @@ for a game — just don't build anything that needs privacy on top of it.
 npm test
 ```
 
-292 checks across five suites. The browser suites vendor Phaser locally and
+303 checks across five suites. The browser suites vendor Phaser locally and
 swap MQTT for a loopback stub that relays over `BroadcastChannel`, so two tabs
 share one "broker" and a real multi-client room can be tested offline.
 
-- **`sim.test.mjs`** (184) — codec round-trips, truncation tolerance, payload
+- **`sim.test.mjs`** (194) — codec round-trips, truncation tolerance, payload
   size at the cap, enemy cap, difficulty scaling, wave pacing, damage
   attribution, steering, decoy priority, host adoption, shockwave, progression
   and upgrade caps, deterministic drop rolls, turn-rate limiting, the auto-aim
@@ -710,7 +725,7 @@ share one "broker" and a real multi-client room can be tested offline.
 - **`mobile.test.mjs`** (15) — an emulated Pixel with a touchscreen and no
   mouse: taps through the whole flow, and hit-tests that nothing invisible is
   covering the buttons.
-- **`multiplayer.test.mjs`** (37) — two clients: election, peer unpacking,
+- **`multiplayer.test.mjs`** (38) — two clients: election, peer unpacking,
   mid-game join, interpolation, squad scaling, seeing each other's fire, pause
   propagation, and **host failover** with the horde carried through.
 

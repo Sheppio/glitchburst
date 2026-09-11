@@ -235,4 +235,14 @@ export const RENDER = {
   remotePlayerLerp: 0.28,
   /** If a peer sprite is further than this from its target, snap instead of gliding. */
   snapDistance: 420,
+  /**
+   * How far the off-screen markers sit in from the edge of the screen.
+   *
+   * Half the arrow plus a little: on the edge itself half of it is clipped by
+   * the viewport, which reads as a rendering fault rather than as a pointer.
+   */
+  markerMargin: 24,
+  /** Power-up markers: present, not attention-grabbing. */
+  markerPowerUpColour: 0x5a6473,
+  markerPowerUpAlpha: 0.4,
 } as const;
