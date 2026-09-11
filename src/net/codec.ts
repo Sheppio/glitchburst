@@ -51,12 +51,15 @@ export function decodeHorde(payload: string): EnemySnapshot[] {
     if (!rec) continue;
     const f = rec.split(FLD);
     if (f.length < 5) continue;
+    // Clamp to the known range rather than naming each kind: an unrecognised
+    // value is a peer on a newer build, and rendering it as a Glitch Bug is a
+    // better failure than dropping it and shooting at nothing.
     const kind = num(f[3]!);
     out.push({
       id: f[0]!,
       x: num(f[1]!),
       y: num(f[2]!),
-      kind: (kind === 1 || kind === 2 ? kind : 0) as EnemyKind,
+      kind: (kind >= 0 && kind <= 5 ? kind : 0) as EnemyKind,
       hp: un36(f[4]!),
     });
   }

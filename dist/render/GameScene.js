@@ -6,7 +6,7 @@ import { Topics, segment } from '../net/topics.js';
 import { CLASSES, classDps } from '../sim/classes.js';
 import { ENEMY_DEFS } from '../sim/enemyTypes.js';
 import { HordeEngine } from '../sim/HordeEngine.js';
-import { PROGRESSION, UPGRADES, UPGRADE_ORDER } from '../sim/progression.js';
+import { UPGRADES, UPGRADE_ORDER } from '../sim/progression.js';
 import { pickTarget } from '../sim/targeting.js';
 import { EnemyKind, FLAG_ABILITY, FLAG_DOWN, FLAG_FIRING } from '../types.js';
 import { approachAngle, clamp, counterId, dist2, lerpAngle, segmentDist2 } from '../util.js';
@@ -1203,7 +1203,7 @@ export class GameScene extends Phaser.Scene {
             gameOver: this.gameOver,
             players: this.cfg.room.squadSize,
             chips: this.progression.progress.chips,
-            chipsPerPowerUp: PROGRESSION.chipsPerPowerUp,
+            chipsPerPowerUp: Math.round(this.progression.progress.chipsNeeded),
             upgrades: UPGRADE_ORDER.map((id) => ({
                 short: UPGRADES[id].short,
                 cssColour: UPGRADES[id].cssColour,

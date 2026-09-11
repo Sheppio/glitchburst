@@ -36,7 +36,7 @@ Developing needs the compiler:
 ```bash
 npm install
 npm run watch      # tsc --watch, rebuilding dist/ on save
-npm test           # 160 tests: simulation, codec, single client, mobile, two clients
+npm test           # 169 tests: simulation, codec, single client, mobile, two clients
 ```
 
 `dist/` is committed on purpose — it is what GitHub Pages serves.
@@ -197,11 +197,20 @@ when they joined.
 
 ## Enemies
 
-| | HP | Speed | Behaviour |
+| | HP | From wave | Behaviour |
 | --- | --- | --- | --- |
-| **Skittering Glitch Bug** | 30 | fast | charges straight in |
-| **Rogue Firewall Drone** | 58 | medium | hovers at ~300px, strafes, fires |
-| **Trojan Tank** | 265 | slow | walks through everything |
+| **Skittering Glitch Bug** | 30 | 1 | charges straight in |
+| **Rogue Firewall Drone** | 58 | 3 | hovers at ~300px, strafes, fires |
+| **Packet Wraith** | 26 | 4 | fast, weaves — hard to lead, not hard to kill |
+| **Spore Node** | 78 | 6 | bursts into two Glitch Bugs when killed |
+| **Trojan Tank** | 265 | 8 | walks through everything |
+| **Ransom Brute** | 540 | 12 | very slow, very heavy, drops well |
+
+Kinds are **introduced over time**, and each wave draws from a **subset of two
+or three** of what is unlocked rather than a uniform blend of everything. Wave
+one is only Glitch Bugs. A wave of weaving wraiths reads differently to a wave
+of spore nodes; "a bit of each, always" reads as nothing. A kind unlocking on a
+given wave is always in that wave's roster, so no debut is missed.
 
 ## Progression
 
@@ -417,11 +426,11 @@ for a game — just don't build anything that needs privacy on top of it.
 npm test
 ```
 
-160 checks across four suites. The browser suites vendor Phaser locally and
+169 checks across four suites. The browser suites vendor Phaser locally and
 swap MQTT for a loopback stub that relays over `BroadcastChannel`, so two tabs
 share one "broker" and a real multi-client room can be tested offline.
 
-- **`sim.test.mjs`** (85) — codec round-trips, truncation tolerance, payload
+- **`sim.test.mjs`** (94) — codec round-trips, truncation tolerance, payload
   size at the cap, enemy cap, difficulty scaling, wave pacing, damage
   attribution, steering, decoy priority, host adoption, shockwave, progression
   and upgrade caps, deterministic drop rolls, turn-rate limiting, and the

@@ -10,47 +10,62 @@ export const UPGRADES = {
         id: 'damage',
         name: 'Payload Boost',
         short: 'DMG',
-        blurb: '+18% weapon damage',
+        blurb: '+9% weapon damage',
         colour: 0xff2d95,
         cssColour: '#ff2d95',
-        step: 0.18,
-        maxStacks: 12,
+        step: 0.09,
+        maxStacks: 20,
     },
     speed: {
         id: 'speed',
         name: 'Clock Boost',
         short: 'SPD',
-        blurb: '+8% movement speed',
+        blurb: '+4.5% movement speed',
         colour: 0x00c8dc,
         cssColour: '#00c8dc',
-        step: 0.08,
-        maxStacks: 8,
+        step: 0.045,
+        maxStacks: 12,
     },
     regen: {
         id: 'regen',
         name: 'Self Repair',
         short: 'REG',
-        blurb: '+1.1 health per second',
+        blurb: '+0.55 health per second',
         colour: 0x3fae00,
         cssColour: '#3fae00',
-        step: 1.1,
-        maxStacks: 8,
+        step: 0.55,
+        maxStacks: 12,
     },
     firerate: {
         id: 'firerate',
         name: 'Pipeline Boost',
         short: 'ROF',
-        blurb: '+11% fire rate',
+        blurb: '+5.5% fire rate',
         colour: 0xff9f00,
         cssColour: '#ff9f00',
-        step: 0.11,
-        maxStacks: 10,
+        step: 0.055,
+        maxStacks: 16,
     },
 };
 export const UPGRADE_ORDER = ['damage', 'speed', 'firerate', 'regen'];
 export const PROGRESSION = {
-    /** Chips needed for one power-up. */
-    chipsPerPowerUp: 10,
+    /**
+     * Chips for the first power-up. Each subsequent one costs more.
+     *
+     * A flat price made the whole build resolve by wave ten: every upgrade was
+     * taken while the waves were still small, and the rest of the run had no
+     * progression left in it. Halving the per-stack values alone would not have
+     * fixed that — it would only have made the same early plateau weaker.
+     *
+     * Escalating instead keeps the shape people actually enjoy: the first few
+     * come quickly and teach you what the upgrades do, and the last few are
+     * genuinely earned.
+     */
+    chipsPerPowerUp: 8,
+    /** Added to the price for each power-up already taken. */
+    chipCostGrowth: 1.5,
+    /** Price ceiling, so a very long run does not stall entirely. */
+    chipCostMax: 45,
     /** Chips inside this radius latch on and home in. */
     magnetRadius: 175,
     /** ...and are collected inside this one. */
@@ -87,16 +102,23 @@ export const PROGRESSION = {
 export class PlayerProgress {
     /** Chips banked toward the next power-up. */
     chips = 0;
+    /** Power-ups claimed this run. Drives the rising price. */
+    powerUpsTaken = 0;
     /** Chips collected across the whole run, for the end-of-run readout. */
     totalChips = 0;
     stacks = { damage: 0, speed: 0, firerate: 0, regen: 0 };
+    /** Chips required for the next power-up, rising with each one taken. */
+    get chipsNeeded() {
+        return Math.min(PROGRESSION.chipCostMax, PROGRESSION.chipsPerPowerUp + this.powerUpsTaken * PROGRESSION.chipCostGrowth);
+    }
     /** @returns true if this chip completed a set and earned a power-up. */
     addChip() {
         this.chips += 1;
         this.totalChips += 1;
-        if (this.chips < PROGRESSION.chipsPerPowerUp)
+        if (this.chips < this.chipsNeeded)
             return false;
-        this.chips -= PROGRESSION.chipsPerPowerUp;
+        this.chips -= this.chipsNeeded;
+        this.powerUpsTaken += 1;
         return true;
     }
     /** @returns false if that upgrade is already maxed. */

@@ -11,6 +11,9 @@ export enum EnemyKind {
   GlitchBug = 0,
   FirewallDrone = 1,
   TrojanTank = 2,
+  PacketWraith = 3,
+  SporeNode = 4,
+  RansomBrute = 5,
 }
 
 export interface Vec2 {

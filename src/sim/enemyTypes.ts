@@ -15,6 +15,18 @@ export interface EnemyDef {
   colour: number;
   /** Relative spawn weight, scaled by wave number in `HordeEngine`. */
   weight: number;
+  /**
+   * First wave this kind can appear in.
+   *
+   * Everything arriving at once means wave 1 already shows the whole game. Held
+   * back, each new silhouette is a small event, and the player learns one
+   * threat at a time instead of six simultaneously.
+   */
+  minWave: number;
+  /** Perpendicular weave amplitude, as a fraction of speed. 0 for straight-line movers. */
+  weave?: number;
+  /** Spawns this many Glitch Bugs where it dies. */
+  splitInto?: number;
   score: number;
   /**
    * Chips dropped on death. Fixed per kind rather than randomised: every
@@ -51,6 +63,7 @@ export const ENEMY_DEFS: Record<EnemyKind, EnemyDef> = {
     contactCooldown: 0.6,
     colour: 0xff2d95,
     weight: 68,
+    minWave: 1,
     score: 10,
     chipDrop: 1,
     powerUpChance: 0,
@@ -66,6 +79,7 @@ export const ENEMY_DEFS: Record<EnemyKind, EnemyDef> = {
     contactCooldown: 0.8,
     colour: 0xffb300,
     weight: 24,
+    minWave: 3,
     score: 25,
     chipDrop: 2,
     powerUpChance: 0.06,
@@ -88,11 +102,78 @@ export const ENEMY_DEFS: Record<EnemyKind, EnemyDef> = {
     contactCooldown: 0.9,
     colour: 0x7a5cff,
     weight: 8,
+    minWave: 8,
     score: 60,
     chipDrop: 4,
     powerUpChance: 0.22,
   },
+  [EnemyKind.PacketWraith]: {
+    kind: EnemyKind.PacketWraith,
+    name: 'Packet Wraith',
+    tag: 'SYN/ACK',
+    hp: 26,
+    speed: 232,
+    radius: 11,
+    contactDamage: 6,
+    contactCooldown: 0.45,
+    colour: 0x00a98f,
+    weight: 30,
+    minWave: 4,
+    score: 18,
+    chipDrop: 1,
+    powerUpChance: 0,
+    // Weaves rather than charging, so it is genuinely harder to lead than a bug
+    // despite being no tougher.
+    weave: 0.75,
+  },
+
+  [EnemyKind.SporeNode]: {
+    kind: EnemyKind.SporeNode,
+    name: 'Spore Node',
+    tag: 'fork()',
+    hp: 78,
+    speed: 96,
+    radius: 18,
+    contactDamage: 9,
+    contactCooldown: 0.7,
+    colour: 0xf4511e,
+    weight: 18,
+    minWave: 6,
+    score: 35,
+    chipDrop: 2,
+    powerUpChance: 0.04,
+    // Killing one is not the end of it. Punishes clearing the slow target
+    // first and walking away.
+    splitInto: 2,
+  },
+
+  [EnemyKind.RansomBrute]: {
+    kind: EnemyKind.RansomBrute,
+    name: 'Ransom Brute',
+    tag: 'ENCRYPT',
+    hp: 540,
+    speed: 46,
+    radius: 39,
+    contactDamage: 27,
+    contactCooldown: 1,
+    colour: 0x455a64,
+    weight: 5,
+    minWave: 12,
+    score: 120,
+    chipDrop: 6,
+    powerUpChance: 0.3,
+  },
 };
+
+/** Every kind, in the order they are unlocked. */
+export const ALL_KINDS: EnemyKind[] = [
+  EnemyKind.GlitchBug,
+  EnemyKind.FirewallDrone,
+  EnemyKind.PacketWraith,
+  EnemyKind.SporeNode,
+  EnemyKind.TrojanTank,
+  EnemyKind.RansomBrute,
+];
 
 /** Fragments of "leaked data" that spray out of a corpse. */
 export const DATA_STRINGS = [

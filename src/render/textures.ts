@@ -51,6 +51,9 @@ export function createTextures(scene: Phaser.Scene): void {
   drawBug(scene);
   drawDrone(scene);
   drawTank(scene);
+  drawWraith(scene);
+  drawSpore(scene);
+  drawBrute(scene);
 }
 
 /** A single white texel. Particles tint it, so one texture covers every burst. */
@@ -244,6 +247,114 @@ function drawTank(scene: Phaser.Scene): void {
   g.fillStyle(def.colour, 1).fillRoundedRect(c + r * 0.75, c - 5, r * 0.6, 10, 4);
 
   g.generateTexture(TEX.enemy(EnemyKind.TrojanTank), size, size);
+  g.destroy();
+}
+
+/** Packet Wraith: a lean double chevron. Reads as speed before anything else. */
+function drawWraith(scene: Phaser.Scene): void {
+  const def = ENEMY_DEFS[EnemyKind.PacketWraith];
+  const r = def.radius;
+  const size = Math.ceil(r * 1.9 + 8) * 2;
+  const c = size / 2;
+  const g = scene.make.graphics({ x: 0, y: 0 }, false);
+
+  g.fillStyle(def.colour, 0.2).fillCircle(c, c, r + 6);
+
+  const chevron = (offset: number, scale: number) => {
+    g.beginPath();
+    g.moveTo(c + offset + r * scale, c);
+    g.lineTo(c + offset - r * 0.5 * scale, c - r * scale);
+    g.lineTo(c + offset - r * 0.1 * scale, c);
+    g.lineTo(c + offset - r * 0.5 * scale, c + r * scale);
+    g.closePath();
+    g.fillPath();
+  };
+
+  g.fillStyle(def.colour, 1);
+  chevron(r * 0.45, 1);
+  g.fillStyle(def.colour, 0.55);
+  chevron(-r * 0.55, 0.8);
+
+  g.generateTexture(TEX.enemy(EnemyKind.PacketWraith), size, size);
+  g.destroy();
+}
+
+/** Spore Node: a spiked seed, visibly full of something waiting to get out. */
+function drawSpore(scene: Phaser.Scene): void {
+  const def = ENEMY_DEFS[EnemyKind.SporeNode];
+  const r = def.radius;
+  const size = Math.ceil(r * 1.6 + 8) * 2;
+  const c = size / 2;
+  const g = scene.make.graphics({ x: 0, y: 0 }, false);
+
+  g.fillStyle(def.colour, 0.18).fillCircle(c, c, r + 7);
+
+  // Spikes.
+  g.fillStyle(def.colour, 1);
+  for (let n = 0; n < 8; n++) {
+    const a = (Math.PI / 4) * n;
+    g.beginPath();
+    g.moveTo(c + Math.cos(a) * r * 1.5, c + Math.sin(a) * r * 1.5);
+    g.lineTo(c + Math.cos(a + 0.34) * r * 0.85, c + Math.sin(a + 0.34) * r * 0.85);
+    g.lineTo(c + Math.cos(a - 0.34) * r * 0.85, c + Math.sin(a - 0.34) * r * 0.85);
+    g.closePath();
+    g.fillPath();
+  }
+
+  g.fillStyle(0x0b1017, 0.9).fillCircle(c, c, r * 0.92);
+  g.fillStyle(def.colour, 1).fillCircle(c, c, r * 0.78);
+  // Two pale cells inside — the things it splits into.
+  g.fillStyle(0xffffff, 0.85).fillCircle(c - r * 0.26, c - r * 0.1, r * 0.24);
+  g.fillStyle(0xffffff, 0.85).fillCircle(c + r * 0.26, c + r * 0.14, r * 0.24);
+
+  g.generateTexture(TEX.enemy(EnemyKind.SporeNode), size, size);
+  g.destroy();
+}
+
+/** Ransom Brute: a heavy plated octagon with a padlock slot. */
+function drawBrute(scene: Phaser.Scene): void {
+  const def = ENEMY_DEFS[EnemyKind.RansomBrute];
+  const r = def.radius;
+  const size = Math.ceil(r * 1.35 + 10) * 2;
+  const c = size / 2;
+  const g = scene.make.graphics({ x: 0, y: 0 }, false);
+
+  const octagon = (radius: number) => {
+    g.beginPath();
+    for (let n = 0; n < 8; n++) {
+      const a = (Math.PI / 4) * n + Math.PI / 8;
+      const px = c + Math.cos(a) * radius;
+      const py = c + Math.sin(a) * radius;
+      if (n === 0) g.moveTo(px, py);
+      else g.lineTo(px, py);
+    }
+    g.closePath();
+  };
+
+  g.fillStyle(def.colour, 0.2).fillCircle(c, c, r + 9);
+  g.fillStyle(0x0b1017, 0.9);
+  octagon(r + 3);
+  g.fillPath();
+  g.fillStyle(def.colour, 1);
+  octagon(r);
+  g.fillPath();
+
+  // Plating.
+  g.lineStyle(3, 0x0b1017, 0.45);
+  g.beginPath();
+  g.moveTo(c - r * 0.55, c - r * 0.7).lineTo(c - r * 0.55, c + r * 0.7);
+  g.moveTo(c + r * 0.55, c - r * 0.7).lineTo(c + r * 0.55, c + r * 0.7);
+  g.strokePath();
+
+  // Lock: a shackle over a slot, so "ransom" is legible at a glance.
+  g.lineStyle(4, 0xffd54f, 1).strokeCircle(c, c - r * 0.18, r * 0.3);
+  g.fillStyle(0xffd54f, 1).fillRoundedRect(c - r * 0.38, c - r * 0.1, r * 0.76, r * 0.62, 3);
+  g.fillStyle(0x0b1017, 0.85).fillRect(c - r * 0.06, c + r * 0.06, r * 0.12, r * 0.26);
+
+  // Cannon.
+  g.fillStyle(def.colour, 1).fillRoundedRect(c + r * 0.85, c - 6, r * 0.5, 12, 4);
+
+  g.generateTexture(TEX.enemy(EnemyKind.RansomBrute), size, size);
   g.destroy();
 }
 

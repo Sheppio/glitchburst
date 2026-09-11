@@ -11,7 +11,7 @@ import {
 import { HORDE, PLAYER, TURN_RATE_RAD_PER_SEC } from '../dist/config.js';
 import { PlayerProgress, PROGRESSION, UPGRADES, UPGRADE_ORDER } from '../dist/sim/progression.js';
 import { approachAngle, hashUnit } from '../dist/util.js';
-import { ENEMY_DEFS } from '../dist/sim/enemyTypes.js';
+import { ALL_KINDS, ENEMY_DEFS } from '../dist/sim/enemyTypes.js';
 import { pickTarget, targetScore, TARGETING } from '../dist/sim/targeting.js';
 import { CLASSES, CLASS_ORDER, classDps, weaponRange } from '../dist/sim/classes.js';
 import { Pool } from '../dist/render/pool.js';
@@ -241,6 +241,28 @@ const run = (engine, seconds, t = targets(1)) => {
 }
 
 {
+  // Power-ups must get dearer, or the whole build resolves while the waves are
+  // still small and the rest of the run has no progression in it.
+  const p = new PlayerProgress();
+  const first = p.chipsNeeded;
+  for (let i = 0; i < 200; i++) p.addChip();
+  const later = p.chipsNeeded;
+  check('power-ups cost more as they accumulate', later > first,
+    `${first} chips for the first, ${later} for the ${p.powerUpsTaken + 1}th`);
+
+  const maxed = new PlayerProgress();
+  for (let i = 0; i < 20000; i++) maxed.addChip();
+  check('the price is capped', maxed.chipsNeeded === PROGRESSION.chipCostMax,
+    `${maxed.chipsNeeded} chips`);
+
+  const swing =
+    (1 + UPGRADES.damage.step * UPGRADES.damage.maxStacks) *
+    (1 + UPGRADES.firerate.step * UPGRADES.firerate.maxStacks);
+  check('a fully upgraded player is strong but not absurd', swing > 3 && swing < 6,
+    `x${swing.toFixed(1)} dps between a fresh and a maxed run`);
+}
+
+{
   const p = new PlayerProgress();
   check('self repair starts at nothing', p.bonusRegenPerSec === 0);
   p.grant('regen');
@@ -343,6 +365,72 @@ const run = (engine, seconds, t = targets(1)) => {
 
   check('every quoted stat is a finite positive number',
     CLASS_ORDER.every((id) => classDps(CLASSES[id]) > 0 && weaponRange(CLASSES[id]) > 0));
+}
+
+/* --------------------------------------------------------- enemy rosters */
+
+{
+  // Nothing may appear before its debut wave, and every debut must actually
+  // happen — a kind that is unlocked but never rostered is content nobody sees.
+  const engine = new HordeEngine();
+  const t = targets(1);
+  const dt = 1 / 30;
+  const firstSeen = new Map();
+  const rosterSizes = [];
+  let debutsHonoured = true;
+
+  for (let i = 0; i < 30 * 60 * 20 && engine.waveNumber < 16; i++) {
+    const result = engine.step(dt, t);
+    for (const ev of result.events) {
+      if (ev.t !== 'wave') continue;
+      rosterSizes.push(engine.roster.length);
+      for (const kind of engine.roster) {
+        if (!firstSeen.has(kind)) firstSeen.set(kind, ev.n);
+        if (ev.n < ENEMY_DEFS[kind].minWave) debutsHonoured = false;
+      }
+      // A kind unlocking this wave must be in this wave's roster.
+      for (const kind of ALL_KINDS) {
+        if (ENEMY_DEFS[kind].minWave === ev.n && !engine.roster.includes(kind)) debutsHonoured = false;
+      }
+    }
+    for (const e of [...engine.enemies.values()]) {
+      if (Math.random() < 0.02) engine.reportDamage(e.id, 99999, 'p');
+    }
+  }
+
+  check('no kind appears before its debut wave', debutsHonoured,
+    [...firstSeen].map(([k, w]) => `${ENEMY_DEFS[k].name.split(' ')[0]}@${w}`).join(' '));
+  check('wave one is only Glitch Bugs', firstSeen.get(0) === 1 && (firstSeen.get(2) ?? 99) > 1);
+  check('a wave draws from a subset, not everything',
+    Math.max(...rosterSizes) <= 3,
+    `${Math.min(...rosterSizes)}-${Math.max(...rosterSizes)} kinds per wave, of ${ALL_KINDS.length}`);
+  check('later kinds do eventually arrive', firstSeen.size >= 5,
+    `${firstSeen.size} of ${ALL_KINDS.length} kinds rostered by wave 16`);
+}
+
+{
+  // A Spore Node bursting is the point of it; killing one must leave two bugs.
+  const engine = new HordeEngine();
+  const t = targets(1);
+  for (let i = 0; i < 60 * 60; i++) engine.step(1 / 60, t);
+  const spore = engine.spawnAt(4, 1000, 800);
+  const before = engine.enemyCount;
+  engine.reportDamage(spore.id, 99999, 'p');
+  engine.step(1 / 60, t);
+  const bugs = [...engine.enemies.values()].filter((e) => e.kind === 0).length;
+  check('a spore node splits on death', engine.enemyCount === before + 1 && bugs > 0,
+    `${before} -> ${engine.enemyCount} after the node burst into two`);
+}
+
+{
+  // Splitting must respect the cap, or one wave of nodes doubles the horde.
+  const engine = new HordeEngine();
+  const t = targets(4);
+  for (let i = 0; i < 60 * 400; i++) engine.step(1 / 60, t);
+  for (const e of [...engine.enemies.values()].slice(0, 20)) engine.reportDamage(e.id, 99999, 'p');
+  engine.step(1 / 60, t);
+  check('splitting cannot exceed the enemy cap', engine.enemyCount <= HORDE.maxEnemies,
+    `${engine.enemyCount} live`);
 }
 
 /* ---------------------------------------------------------- wave pacing */

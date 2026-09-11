@@ -1,7 +1,7 @@
 import { AI, DIFFICULTY, HORDE, WORLD } from '../config.js';
 import { EnemyKind } from '../types.js';
 import { clamp, counterId, dist2 } from '../util.js';
-import { ENEMY_DEFS } from './enemyTypes.js';
+import { ALL_KINDS, ENEMY_DEFS } from './enemyTypes.js';
 /**
  * The authoritative horde simulation. Runs on exactly one client at a time.
  *
@@ -23,6 +23,10 @@ export class HordeEngine {
     waveTimer = HORDE.firstWaveDelaySec;
     /** Enemies spawned by the current wave, for the early-clear check. */
     lastWaveSize = 0;
+    /** Kinds this wave draws from. Not every unlocked kind appears every wave. */
+    roster = [EnemyKind.GlitchBug];
+    /** Seconds of simulation, for weaving movement. */
+    clock = 0;
     /** Seconds since the current wave landed. */
     sinceWave = 0;
     wave = 0;
@@ -65,6 +69,7 @@ export class HordeEngine {
         this.pending.clear();
         this.wave = 0;
         this.waveTimer = HORDE.firstWaveDelaySec;
+        this.roster = [EnemyKind.GlitchBug];
         this.lastWaveSize = 0;
         this.sinceWave = 0;
         this.nextId = 1;
@@ -145,6 +150,7 @@ export class HordeEngine {
         // baiting the horde would otherwise make the horde bigger.
         const playerTargets = targets.filter((t) => t.alive && t.priority <= 1 && t.id !== 'origin').length;
         this.players = clamp(playerTargets, 1, HORDE.maxPlayers);
+        this.clock += dt;
         this.resolveDamage(result);
         this.advanceWaves(dt, targets, result);
         const live = targets.filter((t) => t.alive);
@@ -187,6 +193,14 @@ export class HordeEngine {
                 else {
                     e.vx = (dx / d) * e.speed;
                     e.vy = (dy / d) * e.speed;
+                    // Weavers add a perpendicular oscillation, phase-offset per enemy so
+                    // a group of them fans out rather than moving as one ribbon.
+                    if (def.weave) {
+                        const phase = (e.id.charCodeAt(e.id.length - 1) % 16) * 0.4;
+                        const swing = Math.sin(this.clock * 4.5 + phase) * def.weave * e.speed;
+                        e.vx += (-dy / d) * swing;
+                        e.vy += (dx / d) * swing;
+                    }
                 }
             }
             else {
@@ -213,6 +227,13 @@ export class HordeEngine {
                 const def = ENEMY_DEFS[e.kind];
                 result.events.push({ t: 'death', id: e.id, x: e.x, y: e.y, kind: e.kind });
                 result.kills.push({ id: e.id, kind: e.kind, x: e.x, y: e.y, score: def.score, attacker: dmg.attacker });
+                // Spore Nodes burst into smaller processes where they fell.
+                for (let n = 0; n < (def.splitInto ?? 0); n++) {
+                    if (this.enemies.size >= HORDE.maxEnemies)
+                        break;
+                    const angle = (Math.PI * 2 * n) / (def.splitInto ?? 1);
+                    this.spawnAt(EnemyKind.GlitchBug, e.x + Math.cos(angle) * (def.radius + 6), e.y + Math.sin(angle) * (def.radius + 6));
+                }
             }
         }
         this.pending.clear();
@@ -233,6 +254,7 @@ export class HordeEngine {
             return;
         this.wave += 1;
         this.sinceWave = 0;
+        this.roster = this.rollRoster();
         const want = this.waveSize;
         const room = HORDE.maxEnemies - this.enemies.size;
         const size = Math.max(0, Math.min(want, room));
@@ -245,17 +267,75 @@ export class HordeEngine {
         this.waveTimer = this.intervalFor(size);
         result.events.push({ t: 'wave', n: this.wave, size });
     }
-    /** Later waves shift the mix away from bugs and toward drones and tanks. */
+    /**
+     * Choose which kinds this wave is built from.
+     *
+     * Two filters. `minWave` decides what exists yet, so the player meets one new
+     * silhouette at a time rather than all six in wave one. Then a *subset* of
+     * what is unlocked is drawn for the wave itself, so waves have a character —
+     * a wave of wraiths reads differently to a wave of spore nodes, where a
+     * uniform blend of everything just reads as "enemies".
+     *
+     * A newly unlocked kind is always included, so its debut is never missed.
+     */
+    rollRoster() {
+        const unlocked = ALL_KINDS.filter((kind) => this.wave >= ENEMY_DEFS[kind].minWave);
+        const debut = unlocked.filter((kind) => ENEMY_DEFS[kind].minWave === this.wave);
+        // Early on there is nothing to choose between; take everything.
+        if (unlocked.length <= 2)
+            return unlocked;
+        const picks = new Set(debut);
+        // Always keep a cheap filler kind so a wave is never made entirely of tanks.
+        const fodder = unlocked.filter((k) => ENEMY_DEFS[k].hp <= 80);
+        if (fodder.length)
+            picks.add(fodder[Math.floor(Math.random() * fodder.length)]);
+        const target = Math.min(unlocked.length, 2 + Math.floor(Math.random() * 2));
+        const pool = unlocked.filter((k) => !picks.has(k));
+        while (picks.size < target && pool.length) {
+            picks.add(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+        }
+        return [...picks];
+    }
+    /** Weighted pick from this wave's roster; heavier kinds grow more common. */
     rollKind() {
-        const bug = Math.max(20, ENEMY_DEFS[EnemyKind.GlitchBug].weight - this.wave * 3);
-        const drone = ENEMY_DEFS[EnemyKind.FirewallDrone].weight + this.wave * 2;
-        const tank = ENEMY_DEFS[EnemyKind.TrojanTank].weight + this.wave * 1.2;
-        const roll = Math.random() * (bug + drone + tank);
-        if (roll < bug)
-            return EnemyKind.GlitchBug;
-        if (roll < bug + drone)
-            return EnemyKind.FirewallDrone;
-        return EnemyKind.TrojanTank;
+        const weights = this.roster.map((kind) => {
+            const def = ENEMY_DEFS[kind];
+            // Fodder thins out over time, everything else thickens.
+            return def.hp <= 40
+                ? Math.max(18, def.weight - this.wave * 2.5)
+                : def.weight + this.wave * 1.4;
+        });
+        const total = weights.reduce((a, b) => a + b, 0);
+        let roll = Math.random() * total;
+        for (let i = 0; i < this.roster.length; i++) {
+            roll -= weights[i];
+            if (roll <= 0)
+                return this.roster[i];
+        }
+        return this.roster[this.roster.length - 1] ?? EnemyKind.GlitchBug;
+    }
+    /** Place one enemy at an exact point, bypassing the safe-distance ring. */
+    spawnAt(kind, x, y) {
+        if (this.enemies.size >= HORDE.maxEnemies)
+            return null;
+        const def = ENEMY_DEFS[kind];
+        const hp = Math.round(def.hp * this.hpScale);
+        const enemy = {
+            id: counterId('e', this.nextId++),
+            kind,
+            x: clamp(x, 20, WORLD.width - 20),
+            y: clamp(y, 20, WORLD.height - 20),
+            vx: 0,
+            vy: 0,
+            hp,
+            maxHp: hp,
+            speed: def.speed * (0.9 + Math.random() * 0.2),
+            cooldown: Math.random() * 1.5,
+            stun: 0,
+            targetId: null,
+        };
+        this.enemies.set(enemy.id, enemy);
+        return enemy;
     }
     spawn(kind, targets) {
         if (this.enemies.size >= HORDE.maxEnemies)
