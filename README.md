@@ -1,6 +1,6 @@
 # GLITCHBURST
 
-<!-- version -->**v0.2.24**<!-- /version --> — the build currently on Pages.
+<!-- version -->**v0.2.25**<!-- /version --> — the build currently on Pages.
 
 A co-op top-down horde shooter that runs entirely in the browser. **No game server.**
 Every client talks to a public MQTT broker over WebSockets, and one of them
@@ -38,7 +38,7 @@ Developing needs the compiler:
 ```bash
 npm install
 npm run watch      # tsc --watch, rebuilding dist/ on save
-npm test           # 356 tests: simulation, codec, single client, mobile, controller, two clients
+npm test           # 381 tests: simulation, codec, single client, mobile, controller, two clients
 ```
 
 `dist/` is committed on purpose — it is what GitHub Pages serves.
@@ -83,6 +83,47 @@ down the moment it hears the lower one's heartbeat.
 
 Disconnects are also covered by an MQTT **Last Will** on the presence topic, so
 a closed tab de-lists instantly instead of waiting out the timeout.
+
+#### Not splitting the room in two
+
+A room that quietly becomes two rooms is the worst failure this architecture
+has, because nothing about it looks broken. Both halves keep playing, each on
+its own wave, and the only visible symptom is the wave number disagreeing.
+Reported from a four-client session: two clients hit System Failure seconds
+apart while the other two carried on.
+
+The trigger is the browser, not the network. **A tab that is not in front has
+its update loop frozen and its timers throttled** — and somebody testing
+multiplayer has four clients open and at most one of them in front. A client
+that wakes after a spell in the background finds a roster it last heard from a
+minute ago, and the naive response is a catastrophe: drop everyone, find itself
+alone, promote itself to host of a room that already has one.
+
+Three things close that off, and all three are about not treating silence as
+evidence:
+
+- **Time we spent asleep is not evidence about anybody else.** The roster tick
+  measures the gap since the last tick. More than two seconds means *this*
+  client stopped running, so every peer gets a fresh window instead of being
+  dropped on a clock that was not moving.
+- **The presence timeout is a backstop, not the mechanism.** Real departures are
+  covered instantly by the Last Will and by an explicit `alive: 0` on the way
+  out, which leaves the timeout catching only clients that are alive but quiet.
+  Five seconds of quiet is something a browser hands out for free, so it is
+  fifteen now.
+- **Split brains heal over presence, not just the heartbeat.** Presence carries
+  a host claim, every client publishes it every second, and — until this bug —
+  nothing read it. The heartbeat was the only thing that could resolve two
+  clients both claiming authority, so a split persisted for exactly as long as
+  those beats failed to arrive. Same rule as before, second channel: the lower
+  ID wins, and the other steps down.
+
+The reboot rules had a matching hole. A squad has **no death limit at all** —
+you come back for as long as somebody is standing — so a long co-op run racks up
+deaths freely. Measuring that total against the solo pool of three the instant
+the roster shrinks ends the run on the spot, which is precisely what the players
+saw. The solo pool is now rebased at the moment a client actually becomes alone:
+three reboots from then, not a bill for a co-op run that teammates already paid.
 
 ### Bandwidth: batching the horde
 
@@ -362,6 +403,34 @@ and does nothing reads as a bug. Past that point the roll stops offering it.
 The extra capacity also arrives **filled**: headroom you have to earn back is
 felt as nothing at the moment you take it, and this is the one upgrade whose
 job is to save your life.
+
+### Nothing outruns you forever
+
+A horde shooter has one degenerate strategy and this game had it: every chasing
+enemy is slower than every class, the arena is 2400x1600, and a player who stops
+shooting and runs in circles is never caught. With auto-move on that runs
+literally forever — a lone self-driving client circling with a tail of hostiles
+behind it, wave frozen, nothing resolving.
+
+**An enemy's speed grows with its own time on the field.** Nothing for the first
+18 seconds, then +5% of base per second, to a ceiling of 2.1x at 40 seconds.
+Raising base speeds instead would have made every wave harder from its first
+second, punishing the ordinary case to fix the pathological one; ageing only
+bites when nothing is dying, which is exactly when the stalemate exists.
+
+The ceiling is chosen so the fastest chaser ends up *just* past a fully upgraded
+player's top speed — 487 against 447 — while the slowest ends at 97 and remains
+no threat to anyone who is actually playing. A first pass at 12s/6%/2.4x caught a
+circling kiter hard, 27% of the final twenty seconds in contact. That is more
+pressure than the problem deserves: the complaint is a stalemate that never ends,
+not one that ends slowly.
+
+Enraged enemies wash warm and grow about 12%. The wash is deliberately not a red
+multiply, which would flood the level pip at the centre of every enemy — and that
+pip is the only thing telling a player which of two identical drones is the
+dangerous one. The tell is derived locally from when a client first saw the
+enemy rather than being put on the wire, so it costs nothing in a 20 Hz snapshot
+carrying up to a hundred of them.
 
 Damage being endless is the answer to "I reach fully optimised too soon": there
 is no such state to reach. Once the four bounded lines are full every power-up
@@ -780,6 +849,32 @@ Both upgrades used to sit on the floor for their full 45 seconds and expire. The
 two extra points of contact time are what the shopping costs, and they are the
 reason the safety term exists at all.
 
+#### Not vibrating
+
+The policy re-decides from scratch every frame, and two of its choices are
+discrete: the escape band picks one of sixteen sampled headings, and the bands
+themselves switch on a hard distance threshold. An enemy hovering near that
+threshold, or two escape headings scoring within a hair of each other, makes the
+answer flip frame to frame. Measured over a seeded run, the raw heading changed
+direction by an average of **25 degrees per frame** and reversed outright — more
+than 90 degrees in a single frame — **531 times a minute**. On screen that is a
+player vibrating rather than running, and peers interpolating it from 20 Hz
+snapshots see it worse.
+
+An 80ms exponential ease on the output takes that to **3.7 degrees and 15
+reversals**, at no measurable cost to survival. Two details earn their keep: it
+is exponential so the same turn takes the same wall-clock time at 30fps and 144,
+and the blend is *not* renormalised — both inputs are at most unit length, so a
+hard reversal passes through a near-zero magnitude and the bot slows, turns and
+accelerates instead of teleporting its velocity.
+
+The frame time comes from `performance.now()`, for the third time in this
+codebase. Phaser smooths and caps the delta it hands to `update`, so a starved
+renderer at 5fps still reports 15ms a frame; feeding that to an exponential
+smoother stretched an 80ms ease into a second of real time, and the self-driving
+client visibly crawled away from a standing start. The run clock and the
+HUD-resize watcher hit the same wall.
+
 Real input always wins — any stick or key deflection overrides the autopilot
 that frame, so a human can take a self-driving client back without first
 visiting the settings screen. The toggle is also on the in-game HUD, beside
@@ -847,11 +942,11 @@ for a game — just don't build anything that needs privacy on top of it.
 npm test
 ```
 
-356 checks across five suites. The browser suites vendor Phaser locally and
+381 checks across five suites. The browser suites vendor Phaser locally and
 swap MQTT for a loopback stub that relays over `BroadcastChannel`, so two tabs
 share one "broker" and a real multi-client room can be tested offline.
 
-- **`sim.test.mjs`** (232) — codec round-trips, truncation tolerance, payload
+- **`sim.test.mjs`** (252) — codec round-trips, truncation tolerance, payload
   size at the cap, enemy cap, difficulty scaling, wave pacing, damage
   attribution, steering, decoy priority, host adoption, shockwave, progression
   and upgrade caps, deterministic drop rolls, turn-rate limiting, the auto-aim
@@ -868,9 +963,11 @@ share one "broker" and a real multi-client room can be tested offline.
 - **`mobile.test.mjs`** (15) — an emulated Pixel with a touchscreen and no
   mouse: taps through the whole flow, and hit-tests that nothing invisible is
   covering the buttons.
-- **`multiplayer.test.mjs`** (44) — two clients: election, peer unpacking,
+- **`multiplayer.test.mjs`** (49) — two clients: election, peer unpacking,
   mid-game join, interpolation, squad scaling, seeing each other's fire, pause
-  propagation, and **host failover** with the horde carried through.
+  propagation, **host failover** with the horde carried through, a split brain
+  healing over presence with the heartbeat silenced, and a frozen tab waking up
+  without dropping the room.
 
 These caught eight real bugs. The most instructive:
 

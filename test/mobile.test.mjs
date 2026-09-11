@@ -106,7 +106,13 @@ await page.evaluate(async ({ w, h }) => {
   }));
   send('pointerdown', w * 0.25, h * 0.7);
   for (let i = 1; i <= 12; i++) send('pointermove', w * 0.25, h * 0.7 - i * 6);
-  await new Promise((r) => setTimeout(r, 700));
+  // Held for a fixed number of frames rather than a fixed number of
+  // milliseconds. Movement integrates Phaser's delta, which Phaser caps, so a
+  // frame always advances the player by the same slice of simulated time
+  // however long it actually took to draw. Timing the hold by the clock instead
+  // measures how many frames this machine managed, which on a phone-sized
+  // emulated viewport was close enough to the threshold to fail at random.
+  for (let i = 0; i < 40; i++) await new Promise((r) => requestAnimationFrame(r));
   send('pointerup', w * 0.25, h * 0.7 - 72);
 }, { w: box.width, h: box.height });
 
@@ -116,7 +122,7 @@ const after = await page.evaluate(() => {
 });
 check('the virtual stick moves the player',
   Math.hypot(after.x - before.x, after.y - before.y) > 20,
-  `moved ${Math.hypot(after.x - before.x, after.y - before.y).toFixed(0)}px`);
+  `moved ${Math.hypot(after.x - before.x, after.y - before.y).toFixed(0)}px over 40 frames`);
 
 check('leaving the match hides the sticks again', await (async () => {
   await page.tap('#btn-leave');

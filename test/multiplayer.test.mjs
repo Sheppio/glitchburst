@@ -184,10 +184,22 @@ check('peer publishes no horde snapshots', bState.hordePublished === 0);
 {
   // Rounds fired is the stat only each client knows about itself, so it is the
   // one that proves aggregation rather than broadcast.
+  // Published explicitly rather than left to the once-a-second tick. A page
+  // that is not in front stops running its update loop altogether, so the tick
+  // never comes — and this test used to pass or fail on whether the browser
+  // had frozen the other tab yet.
   await a.bringToFront();
-  await a.evaluate(() => { window.glitchburst.game.scene.getScene('game').shotsFired = 700; });
+  await a.evaluate(() => {
+    const scene = window.glitchburst.game.scene.getScene('game');
+    scene.shotsFired = 700;
+    scene.publishStatsNow();
+  });
   await b.bringToFront();
-  await b.evaluate(() => { window.glitchburst.game.scene.getScene('game').shotsFired = 300; });
+  await b.evaluate(() => {
+    const scene = window.glitchburst.game.scene.getScene('game');
+    scene.shotsFired = 300;
+    scene.publishStatsNow();
+  });
 
   // Published once a second, so both clients need a moment to hear each other.
   const summed = await b
@@ -326,7 +338,14 @@ const settled = await b
   )
   .then(() => true)
   .catch(() => false);
-await a.waitForTimeout(600);
+
+// B has to be in front to publish: a backgrounded page runs no update loop, so
+// its player packets — the thing that re-skins its sprite on A — stop entirely.
+// That is also the production failure this whole section exists for.
+await b.bringToFront();
+await b.waitForTimeout(500);
+await a.bringToFront();
+await a.waitForTimeout(500);
 
 const ids = await a.evaluate(() => ({
   me: window.glitchburst.room.playerId,
@@ -347,6 +366,17 @@ check('the earlier player keeps what they asked for', onA[senior] === 'violet',
 
 // ...and the resolved colour is what actually gets drawn, on the client that
 // did *not* choose it.
+await a
+  .waitForFunction(
+    (peerId) => {
+      const scene = window.glitchburst.game.scene.getScene('game');
+      const remote = scene.remotes.get(peerId);
+      const settledColour = window.glitchburst.room.resolvedColours()[peerId];
+      return Boolean(remote) && remote.swatch === settledColour;
+    },
+    ids.peer, { timeout: 5000 },
+  )
+  .catch(() => {});
 const drawn = await a.evaluate((peerId) => {
   const scene = window.glitchburst.game.scene.getScene('game');
   const remote = scene.remotes.get(peerId);
@@ -355,6 +385,103 @@ const drawn = await a.evaluate((peerId) => {
 check('a teammate is drawn in their settled colour, not their claim',
   Boolean(drawn) && drawn.swatch === onA[ids.peer] && drawn.texture.endsWith(`-${onA[ids.peer]}`),
   drawn ? `${drawn.texture} for a resolved ${onA[ids.peer]}` : 'no remote sprite');
+
+/* ------------------------------------------------------ waking up stale */
+
+// The trigger behind the reported split: a tab that is not in front has its
+// update loop frozen and its timers throttled. It wakes to a roster it last
+// heard from a minute ago, and the naive response — drop them all — shrinks the
+// squad, changes the reboot rules and promotes it to host of a room that
+// already has one.
+{
+  await b.bringToFront();
+  const before = await b.evaluate(() => window.glitchburst.room.peers.size);
+
+  const after = await b.evaluate(() => {
+    const room = window.glitchburst.room;
+    // Exactly the state a tab wakes up in: nothing heard from for a minute,
+    // because nothing was listening for a minute.
+    const stale = performance.now() - 60000;
+    for (const peer of room.peers.values()) peer.lastSeen = stale;
+    room.lastHostBeat = stale;
+    room.lastTickAt = stale;
+
+    // The tick is driven directly rather than waited for. Presence from the
+    // other client lands every second and would refresh the staleness out from
+    // under the test — and one tick is all it takes to get this wrong.
+    room.tick();
+    return { peers: room.peers.size, isHost: room.isHost };
+  });
+
+  check('a client that was frozen does not drop the room on waking',
+    before > 0 && after.peers === before,
+    `${before} peers before a 60s freeze, ${after.peers} after`);
+  check('and does not promote itself over a host that never went away',
+    after.isHost === false, after.isHost ? 'woke up believing it was host' : 'still a peer');
+}
+
+/* --------------------------------------------------------- split brain */
+
+// A room that quietly becomes two rooms is the worst failure this architecture
+// has, because nothing about it looks broken: both halves keep playing, on
+// their own wave, and only the wave number gives it away. Reported from a
+// four-client session — two clients hit System Failure seconds apart while the
+// other two carried on, on different waves.
+//
+// Force the state directly rather than trying to reproduce the stall that
+// caused it: make the higher-id client believe it is host while the lower-id
+// one still is, and check the room converges on one of them again.
+{
+  const ids = await a.evaluate(() => ({
+    me: window.glitchburst.room.playerId,
+    peer: [...window.glitchburst.room.peers.values()][0]?.id,
+  }));
+  const junior = ids.me < ids.peer ? b : a;
+  const senior = junior === a ? b : a;
+
+  // Heartbeats are the channel that normally heals this, so silence them: what
+  // is under test is whether presence alone is enough.
+  await junior.evaluate(() => {
+    const room = window.glitchburst.room;
+    room.__realOnHeartbeat = room.onHeartbeat;
+    room.onHeartbeat = () => {};
+    room._isHost = true;
+    room._hostId = room.playerId;
+    room.events.emit('hostChange', { hostId: room.playerId, isHost: true, reason: 'election' });
+  });
+
+  const both = await junior.evaluate(() => window.glitchburst.room.isHost);
+  const healed = await junior
+    .waitForFunction(() => window.glitchburst.room.isHost === false, null, { timeout: 6000 })
+    .then(() => true)
+    .catch(() => false);
+
+  await junior.evaluate(() => {
+    const room = window.glitchburst.room;
+    if (room.__realOnHeartbeat) room.onHeartbeat = room.__realOnHeartbeat;
+  });
+  await junior.waitForTimeout(600);
+
+  const after = {
+    junior: await junior.evaluate(() => ({
+      isHost: window.glitchburst.room.isHost,
+      hostId: window.glitchburst.room.hostId,
+      simulating: window.glitchburst.game.scene.getScene('game').horde !== null,
+    })),
+    senior: await senior.evaluate(() => ({
+      isHost: window.glitchburst.room.isHost,
+      simulating: window.glitchburst.game.scene.getScene('game').horde !== null,
+    })),
+  };
+
+  check('a split brain heals over presence, with no heartbeat at all', both && healed,
+    healed ? 'the higher id stood down inside six seconds' : 'both clients still claim authority');
+  check('and exactly one client is left simulating',
+    after.senior.isHost && !after.junior.isHost &&
+    after.senior.simulating && !after.junior.simulating,
+    `senior ${after.senior.isHost ? 'host' : 'peer'}/${after.senior.simulating ? 'sim' : 'idle'}, ` +
+    `junior ${after.junior.isHost ? 'host' : 'peer'}/${after.junior.simulating ? 'sim' : 'idle'}`);
+}
 
 /* --------------------------------------------------------- seeing the squad */
 
@@ -413,6 +540,54 @@ check('the reboot delay is capped', revived.waiting <= 20, `${revived.waiting}s`
 
 check('reboots are not counted in a squad', (await state(b)).isHost === false &&
   (await b.evaluate(() => window.glitchburst.game.scene.getScene('game').rebootsLeft())) === null);
+
+// ...and the solo pool must not be applied retroactively when the room shrinks.
+//
+// This is the other half of the reported four-client failure. A squad run has
+// no death limit at all, so a long one racks deaths up freely; measure that
+// total against three the instant the roster drops to one and the run ends on
+// the spot. That is what the players saw — System Failure seconds apart, on
+// clients that had simply lost sight of each other for a moment.
+const shrunk = await b.evaluate(async () => {
+  const scene = window.glitchburst.game.scene.getScene('game');
+  const room = window.glitchburst.room;
+  const frame = () => new Promise((r) => requestAnimationFrame(r));
+
+  scene.gameOver = false;
+  scene.downedFor = 0;
+  scene.deaths = 9;
+  scene.me.hp = scene.me.maxHp;
+  await frame();
+
+  // The room shrinks to one, exactly as a moment of presence silence used to
+  // make it. Pinned rather than emptied: presence from the other client lands
+  // every second and would repopulate the roster mid-measurement.
+  Object.defineProperty(room, 'squadSize', { value: 1, configurable: true });
+  await frame();
+  await frame();
+
+  const squadSize = room.squadSize;
+  const left = scene.rebootsLeft();
+  scene.me.hp = 1;
+  scene.takeDamage(99999);
+  const out = { squadSize, left, gameOver: scene.gameOver, deaths: scene.deaths };
+
+  delete room.squadSize;
+  scene.gameOver = false;
+  scene.downedFor = 0;
+  scene.deaths = 0;
+  scene.soloFromDeaths = 0;
+  scene.me.hp = scene.me.maxHp;
+  await frame();
+  window.__keepAlive = setInterval(() => { scene.me.hp = scene.me.maxHp; }, 100);
+  return out;
+});
+
+check('a squad run that shrinks to one is not billed for its co-op deaths',
+  shrunk.squadSize === 1 && shrunk.gameOver === false,
+  shrunk.gameOver
+    ? `ended the run on death ${shrunk.deaths} the moment the roster emptied`
+    : `alone on death ${shrunk.deaths}, still ${shrunk.left} reboots in hand`);
 
 // Now down the rest of the squad, and the next death is terminal.
 await a.bringToFront();

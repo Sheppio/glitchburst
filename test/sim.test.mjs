@@ -18,12 +18,13 @@ import {
   levelRewardScale, MAX_LEVEL, rollLevel,
 } from '../dist/sim/enemyLevels.js';
 import { pickTarget, targetScore, TARGETING } from '../dist/sim/targeting.js';
-import { autopilotMove, AUTOPILOT } from '../dist/sim/autopilot.js';
+import { autopilotMove, smoothHeading, AUTOPILOT } from '../dist/sim/autopilot.js';
 import { CLASSES, CLASS_ORDER, classDps, weaponRange } from '../dist/sim/classes.js';
 import { Pool } from '../dist/render/pool.js';
 import { fadeOut } from '../dist/render/lerp.js';
 import { orderSquad } from '../dist/render/squadOrder.js';
 import { classIconSvg } from '../dist/ui/classIcon.js';
+import { ENRAGE, enrageProgress, enrageScale } from '../dist/sim/enrage.js';
 import {
   COLOUR_ORDER, DEFAULT_COLOUR, PALETTE, colourOf, isColourId, resolveColours,
 } from '../dist/sim/palette.js';
@@ -573,6 +574,88 @@ const run = (engine, seconds, t = targets(1)) => {
   check('the caller\'s array is left alone', roster.map((m) => m.id).join() === original.map((m) => m.id).join());
 }
 
+/* ------------------------------------------------------------- enrage */
+
+{
+  // The degenerate strategy a horde shooter has to answer: every chaser is
+  // slower than every class, the arena is big, and a player who stops shooting
+  // and runs in circles is never caught. With auto-move on that runs forever.
+  check('nothing changes during the grace period',
+    enrageScale(0) === 1 && enrageScale(ENRAGE.graceSec) === 1);
+  check('and a wave cleared at a normal pace never sees it',
+    enrageScale(ENRAGE.graceSec - 0.01) === 1);
+
+  const later = enrageScale(ENRAGE.graceSec + 10);
+  check('an enemy that survives gets faster',
+    later >= 1.35 && later < ENRAGE.maxScale,
+    `x${later.toFixed(2)} after ${ENRAGE.graceSec + 10}s on the field`);
+  check('but not without limit',
+    enrageScale(600) === ENRAGE.maxScale && enrageScale(1e9) === ENRAGE.maxScale);
+  check('the curve only ever rises',
+    Array.from({ length: 80 }, (_, i) => enrageScale(i)).every((v, i, all) => i === 0 || v >= all[i - 1]));
+
+  // Running has to stop being an answer, or the mechanic does not do its job.
+  const fastest = Math.max(...ALL_KINDS.map((k) => ENEMY_DEFS[k].speed));
+  const topPlayer = Math.max(...CLASS_ORDER.map((id) => CLASSES[id].speed)) *
+    (1 + UPGRADES.speed.step * UPGRADES.speed.maxStacks);
+  check('a fully enraged chaser outruns a fully upgraded player',
+    fastest * ENRAGE.maxScale > topPlayer,
+    `${Math.round(fastest * ENRAGE.maxScale)} vs ${Math.round(topPlayer)}`);
+  // ...but the slow ones stay slow, so this does not quietly become a
+  // difficulty increase for everyone.
+  const slowest = Math.min(...ALL_KINDS.map((k) => ENEMY_DEFS[k].speed));
+  check('and the slowest still is not a threat to a player who is playing',
+    slowest * ENRAGE.maxScale < topPlayer / 2,
+    `${Math.round(slowest * ENRAGE.maxScale)} vs ${Math.round(topPlayer)}`);
+
+  check('the visual tell tracks the mechanic exactly',
+    enrageProgress(0) === 0 && Math.abs(enrageProgress(600) - 1) < 1e-9 &&
+    Math.abs(enrageProgress(ENRAGE.graceSec + 10) -
+      (later - 1) / (ENRAGE.maxScale - 1)) < 1e-9);
+  check('a nonsense age does not produce a nonsense speed',
+    enrageScale(NaN) === 1 && enrageScale(-5) === 1);
+}
+
+{
+  // End to end: a player who refuses to engage gets caught anyway.
+  //
+  // The engine is run twice from the same seed against a target that simply
+  // runs away. Without ageing the gap keeps growing; with it the horde closes.
+  const chase = () => {
+    const realRandom = Math.random;
+    let seed = 0x2f9a17c3;
+    Math.random = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 0x100000000; };
+
+    const engine = new HordeEngine();
+    const dt = 1 / 20;
+    // A kiter: circles the arena at a fully upgraded speed and never shoots.
+    const speed = 290 * (1 + UPGRADES.speed.step * UPGRADES.speed.maxStacks);
+    let angle = 0;
+    let me = { x: 1200, y: 800 };
+    let closest = Infinity;
+
+    for (let i = 0; i < 60 * 20; i++) {
+      angle += dt * 0.5;
+      me = {
+        x: Math.max(40, Math.min(2360, me.x + Math.cos(angle) * speed * dt)),
+        y: Math.max(40, Math.min(1560, me.y + Math.sin(angle) * speed * dt)),
+      };
+      engine.step(dt, [{ id: 'kiter', x: me.x, y: me.y, priority: 1, alive: true }]);
+      if (i > 40 * 20) {
+        for (const e of engine.enemies.values()) {
+          closest = Math.min(closest, Math.hypot(e.x - me.x, e.y - me.y));
+        }
+      }
+    }
+    Math.random = realRandom;
+    return closest;
+  };
+
+  const caught = chase();
+  check('a player who only runs is eventually caught anyway', caught < 60,
+    `closest approach ${caught.toFixed(0)}px in the last 20s of a 60s kite`);
+}
+
 /* --------------------------------------------------------- player colours */
 
 {
@@ -818,6 +901,130 @@ const run = (engine, seconds, t = targets(1)) => {
 }
 
 {
+  /* ------------------------------------------- autopilot: heading smoothing */
+
+  const at = (x, y) => ({ x, y });
+
+  // Eased, not snapped: a single frame moves part of the way and no further.
+  const eased = smoothHeading(at(1, 0), at(-1, 0), 1 / 60);
+  check('one frame moves part of the way toward the new heading',
+    eased.x < 1 && eased.x > -1, `x ${eased.x.toFixed(3)}`);
+  check('and keeps going on the next', smoothHeading(eased, at(-1, 0), 1 / 60).x < eased.x);
+
+  // Not renormalised: a reversal passes through a near-zero magnitude, so the
+  // bot slows, turns and accelerates instead of teleporting its velocity.
+  check('a blended heading is never longer than the inputs',
+    Math.hypot(eased.x, eased.y) <= 1.0001);
+
+  // Frame-rate independence is the point of the exponential: the same turn has
+  // to take the same wall-clock time at 30fps as at 144.
+  let slow = at(1, 0);
+  for (let i = 0; i < 3; i++) slow = smoothHeading(slow, at(0, 1), 1 / 30);
+  let fast = at(1, 0);
+  for (let i = 0; i < 15; i++) fast = smoothHeading(fast, at(0, 1), 1 / 150);
+  check('the same turn takes the same time at any frame rate',
+    Math.abs(slow.x - fast.x) < 0.02 && Math.abs(slow.y - fast.y) < 0.02,
+    `30fps (${slow.x.toFixed(2)}, ${slow.y.toFixed(2)}) vs 150fps (${fast.x.toFixed(2)}, ${fast.y.toFixed(2)})`);
+
+  // "Stand still" has to survive the smoothing rather than decaying into an
+  // endless crawl toward zero.
+  let stopping = at(1, 0);
+  for (let i = 0; i < 60; i++) stopping = smoothHeading(stopping, at(0, 0), 1 / 60);
+  check('a stop command reaches an actual stop',
+    stopping.x === 0 && stopping.y === 0, `(${stopping.x}, ${stopping.y})`);
+
+  check('a garbage frame time is passed through rather than propagated',
+    smoothHeading(at(1, 0), at(0, 1), NaN).y === 1 &&
+    smoothHeading(at(1, 0), at(0, 1), 0).y === 1);
+  check('and so is a garbage previous heading',
+    smoothHeading(at(NaN, 0), at(0, 1), 1 / 60).y === 1);
+}
+
+{
+  // The measurement that motivated the smoothing. The policy re-decides from
+  // scratch every frame and two of its choices are discrete — one of sixteen
+  // sampled escape headings, and a band that switches on a hard distance
+  // threshold — so the raw answer flickers. On screen that is a player
+  // vibrating rather than running, and worse for peers, who interpolate it from
+  // 20Hz snapshots.
+  const drive = (seed, smoothed) => {
+    const realRandom = Math.random;
+    let s = seed >>> 0;
+    Math.random = () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 0x100000000; };
+
+    const engine = new HordeEngine();
+    const world = { width: 2400, height: 1600 };
+    let me = { x: 1200, y: 800 };
+    const speed = 290;
+    const dt = 1 / 60;
+    let previous = { x: 0, y: 0 };
+    let turn = 0;
+    let turns = 0;
+    let reversals = 0;
+    let contacts = 0;
+
+    for (let i = 0; i < 30 * 60; i++) {
+      const enemies = [...engine.enemies.values()].map((e) => ({ x: e.x, y: e.y }));
+      const raw = autopilotMove({
+        x: me.x, y: me.y, enemies, chips: [], weaponRange: 600, moveSpeed: speed, world,
+      });
+      const move = smoothed ? smoothHeading(previous, raw, dt) : raw;
+
+      const pm = Math.hypot(previous.x, previous.y);
+      const cm = Math.hypot(move.x, move.y);
+      if (pm > 0.01 && cm > 0.01) {
+        const dot = (previous.x * move.x + previous.y * move.y) / (pm * cm);
+        const angle = (Math.acos(Math.max(-1, Math.min(1, dot))) * 180) / Math.PI;
+        turn += angle;
+        turns++;
+        // More than a right angle in a sixtieth of a second is not steering.
+        if (angle > 90) reversals++;
+      }
+      previous = move;
+
+      me = {
+        x: Math.max(24, Math.min(world.width - 24, me.x + move.x * speed * dt)),
+        y: Math.max(24, Math.min(world.height - 24, me.y + move.y * speed * dt)),
+      };
+      engine.step(dt, [{ id: 'bot', x: me.x, y: me.y, priority: 1, alive: true }]);
+      // Held off for the same reason as the survival harness below: this bot
+      // has no weapon, and an enraged field would swamp the signal.
+      for (const e of engine.enemies.values()) e.age = 0;
+      for (const e of engine.enemies.values()) {
+        if (Math.hypot(e.x - me.x, e.y - me.y) < 40) { contacts++; break; }
+      }
+    }
+
+    Math.random = realRandom;
+    return { turn: turn / turns, reversals, contact: contacts / (30 * 60) };
+  };
+
+  // Three seeds, averaged, and deliberately three on which the unsmoothed bot
+  // actually gets touched — on a kind seed the survival comparison below is
+  // 0% against 0% and proves nothing.
+  const seeds = [0x13579bdf, 0xdeadbeef, 0xcafebabe];
+  const mean = (rows, key) => rows.reduce((a, r) => a + r[key], 0) / rows.length;
+  const raw = seeds.map((seed) => drive(seed, false));
+  const smooth = seeds.map((seed) => drive(seed, true));
+
+  check('smoothing takes most of the shake out of the heading',
+    mean(smooth, 'turn') < mean(raw, 'turn') / 4,
+    `${mean(raw, 'turn').toFixed(1)}deg per frame raw, ${mean(smooth, 'turn').toFixed(1)}deg smoothed`);
+  check('and all but eliminates outright reversals',
+    mean(smooth, 'reversals') < mean(raw, 'reversals') / 10,
+    `${mean(raw, 'reversals').toFixed(0)} reversals raw, ${mean(smooth, 'reversals').toFixed(0)} smoothed, per 30s`);
+
+  // Survival is a wash, which is the honest result: per seed it moves either
+  // way by a couple of points and the direction is not stable, so this asserts
+  // "no material regression" rather than an improvement it cannot promise.
+  check('and survival is unchanged within the noise',
+    mean(smooth, 'contact') < mean(raw, 'contact') * 1.5 + 0.005,
+    `${(mean(raw, 'contact') * 100).toFixed(1)}% in contact raw, ` +
+    `${(mean(smooth, 'contact') * 100).toFixed(1)}% smoothed ` +
+    `(per seed ${smooth.map((r) => (r.contact * 100).toFixed(1)).join('/')})`);
+}
+
+{
   // Does it actually shop? Scatter loot across a live horde and count what gets
   // banked. The policy that only collected while completely unthreatened took
   // 12 of 40 chips and left both upgrades on the floor to expire; the trip has
@@ -857,6 +1064,12 @@ const run = (engine, seconds, t = targets(1)) => {
       y: Math.max(24, Math.min(world.height - 24, me.y + move.y * speed * dt)),
     };
     engine.step(dt, [{ id: 'bot', x: me.x, y: me.y, priority: 1, alive: true }]);
+    // Ageing is held off here on purpose. This harness bot has no weapon, so
+    // nothing it faces can ever die — every enemy would reach the enrage cap
+    // and run it down whatever its steering did, and the test would stop
+    // measuring the policy it exists to measure. The interaction has its own
+    // test above, which asserts precisely that outcome.
+    for (const e of engine.enemies.values()) e.age = 0;
 
     // Chips are magnetic; upgrades have to be walked onto.
     for (const chip of chips) {
@@ -923,6 +1136,12 @@ const run = (engine, seconds, t = targets(1)) => {
       y: Math.max(24, Math.min(world.height - 24, me.y + move.y * speed * dt)),
     };
     engine.step(dt, [{ id: 'bot', x: me.x, y: me.y, priority: 1, alive: true }]);
+    // Ageing is held off here on purpose. This harness bot has no weapon, so
+    // nothing it faces can ever die — every enemy would reach the enrage cap
+    // and run it down whatever its steering did, and the test would stop
+    // measuring the policy it exists to measure. The interaction has its own
+    // test above, which asserts precisely that outcome.
+    for (const e of engine.enemies.values()) e.age = 0;
 
     // Count frames spent in contact range — the bot cannot kill anything in
     // this harness, so being touched sometimes is expected; living inside the

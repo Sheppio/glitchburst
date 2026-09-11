@@ -4,6 +4,7 @@ import type { AiTarget, Enemy, EnemyId } from '../types.js';
 import { clamp, counterId, dist2 } from '../util.js';
 import { ALL_KINDS, ENEMY_DEFS } from './enemyTypes.js';
 import { clampLevel, killScore, levelHealthScale, rollLevel } from './enemyLevels.js';
+import { enrageScale } from './enrage.js';
 import type { HordeEvent } from '../net/codec.js';
 
 interface PendingDamage {
@@ -133,6 +134,11 @@ export class HordeEngine {
         hp: s.hp > 0 ? s.hp : def.hp,
         maxHp: Math.max(s.hp, def.hp),
         speed: def.speed,
+        // A handover resets the clock. The age is host-only state and was never
+        // on the wire, so the promoted client has no way to recover it — and
+        // handing the squad a fresh grace period is the safe direction to be
+        // wrong in.
+        age: 0,
         cooldown: Math.random() * 2,
         stun: 0,
         targetId: null,
@@ -206,6 +212,12 @@ export class HordeEngine {
       const target = this.pickTarget(e, live);
       e.targetId = target?.id ?? null;
 
+      // Time on the field, and the speed it buys. Kill things at a normal rate
+      // and nothing lives long enough for this to matter; refuse to engage and
+      // the horde closes anyway. See `sim/enrage.ts`.
+      e.age += dt;
+      const speed = e.speed * enrageScale(e.age);
+
       if (e.stun > 0) {
         // Stunned: keep the knockback impulse but apply no steering of its own.
         e.stun -= dt;
@@ -221,8 +233,8 @@ export class HordeEngine {
           const gap = d - def.ranged.preferredRange;
           const approach = Math.abs(gap) < 40 ? 0 : Math.sign(gap);
           const strafe = e.id.charCodeAt(e.id.length - 1) % 2 === 0 ? 1 : -1;
-          e.vx = ((dx / d) * approach + (-dy / d) * strafe * 0.55) * e.speed;
-          e.vy = ((dy / d) * approach + (dx / d) * strafe * 0.55) * e.speed;
+          e.vx = ((dx / d) * approach + (-dy / d) * strafe * 0.55) * speed;
+          e.vy = ((dy / d) * approach + (dx / d) * strafe * 0.55) * speed;
 
           e.cooldown -= dt;
           if (e.cooldown <= 0 && d < def.ranged.preferredRange * 1.6) {
@@ -238,14 +250,14 @@ export class HordeEngine {
             });
           }
         } else {
-          e.vx = (dx / d) * e.speed;
-          e.vy = (dy / d) * e.speed;
+          e.vx = (dx / d) * speed;
+          e.vy = (dy / d) * speed;
 
           // Weavers add a perpendicular oscillation, phase-offset per enemy so
           // a group of them fans out rather than moving as one ribbon.
           if (def.weave) {
             const phase = (e.id.charCodeAt(e.id.length - 1) % 16) * 0.4;
-            const swing = Math.sin(this.clock * 4.5 + phase) * def.weave * e.speed;
+            const swing = Math.sin(this.clock * 4.5 + phase) * def.weave * speed;
             e.vx += (-dy / d) * swing;
             e.vy += (dx / d) * swing;
           }
@@ -455,6 +467,7 @@ export class HordeEngine {
       hp,
       maxHp: hp,
       speed: def.speed * (0.9 + Math.random() * 0.2),
+      age: 0,
       cooldown: Math.random() * 1.5,
       stun: 0,
       targetId: null,
@@ -499,6 +512,7 @@ export class HordeEngine {
       hp,
       maxHp: hp,
       speed: def.speed * (0.9 + Math.random() * 0.2),
+      age: 0,
       cooldown: Math.random() * 1.5,
       stun: 0,
       targetId: null,

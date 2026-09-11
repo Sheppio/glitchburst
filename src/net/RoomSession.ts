@@ -61,6 +61,8 @@ export class RoomSession {
   private unsubs: Array<() => void> = [];
   private timers: number[] = [];
   private lastHostBeat = 0;
+  /** When the roster tick last ran, so a gap can be told from a timeout. */
+  private lastTickAt = 0;
   private beatSeq = 0;
   private _hostId: PlayerId | null = null;
   private _isHost = false;
@@ -262,6 +264,39 @@ export class RoomSession {
       // A newcomer needs to know who is in charge without waiting for a beat.
       if (this._isHost) this.beat();
     }
+
+    // Two clients claiming authority at once, healed over presence.
+    //
+    // The heartbeat already does this, and the heartbeat is the *only* thing
+    // that did — which meant a split brain persisted for exactly as long as
+    // those beats failed to arrive, and the two halves of the room simulated
+    // separate hordes on separate waves the whole time. Presence is the channel
+    // every client publishes on, host or not, once a second; acting on the
+    // claim it has always carried costs nothing and closes that window.
+    //
+    // Same rule as the heartbeat, and deliberately only the unambiguous half:
+    // the lower id wins, so step down. The other client is already running a
+    // simulation, so there is no gap where nobody is.
+    if (record.claimsHost) this.resolveHostClaim(id);
+  }
+
+  /** Somebody else says they are host. Decide whether that outranks us. */
+  private resolveHostClaim(id: PlayerId): void {
+    if (this._isHost) {
+      if (id >= this.playerId) return;
+      this._isHost = false;
+      this._hostId = id;
+      this.events.emit('hostChange', { hostId: id, isHost: false, reason: 'yield' });
+      this.announcePresence();
+      return;
+    }
+
+    // Not host, and nobody we know of is: adopt the claimant rather than sit
+    // hostless until the next beat happens to land.
+    if (this._hostId === null) {
+      this._hostId = id;
+      this.events.emit('hostChange', { hostId: id, isHost: false, reason: 'election' });
+    }
   }
 
   private onHeartbeat(payload: string): void {
@@ -309,6 +344,19 @@ export class RoomSession {
   private tick(): void {
     if (!this.joined) return;
     const now = performance.now();
+
+    // Were we even running? A frozen or throttled tab wakes up with every
+    // timeout already blown through no fault of the room — see
+    // `NET.stallForgivenessMs`. Forgive the gap, hand everyone a fresh window,
+    // and say so on the way past: our own presence is just as stale to them.
+    const gap = this.lastTickAt === 0 ? 0 : now - this.lastTickAt;
+    this.lastTickAt = now;
+    if (gap > NET.stallForgivenessMs) {
+      for (const peer of this.peers.values()) peer.lastSeen = now;
+      this.lastHostBeat = now;
+      this.announcePresence();
+      return;
+    }
 
     let dropped = false;
     for (const [id, peer] of this.peers) {
@@ -359,9 +407,23 @@ export class RoomSession {
       this.events.emit('hostChange', { hostId: this.playerId, isHost: true, reason });
       this.announcePresence();
       this.beat();
-    } else if (!becameHost && this._hostId !== winner) {
-      this._hostId = winner;
-      this.events.emit('hostChange', { hostId: winner, isHost: false, reason });
+      return;
     }
+
+    if (becameHost) return;
+
+    // Somebody else wins. Clearing `_isHost` matters as much as recording who:
+    // the old code updated `_hostId` and left `_isHost` set, which left this
+    // client publishing heartbeats claiming authority while the scene had
+    // already torn down its simulation on the back of the same event. No path
+    // reached that state at the time; adding a second trigger for elections
+    // would have made it reachable.
+    const wasHost = this._isHost;
+    if (!wasHost && this._hostId === winner) return;
+
+    this._isHost = false;
+    this._hostId = winner;
+    this.events.emit('hostChange', { hostId: winner, isHost: false, reason });
+    if (wasHost) this.announcePresence();
   }
 }

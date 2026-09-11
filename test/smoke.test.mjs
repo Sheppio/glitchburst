@@ -410,15 +410,16 @@ await step('auto-move drives the client with no input at all', async () => {
     scene.me.x = 400;
     scene.me.y = 400;
 
-    // Measured as a difference over the same wall-clock window rather than as a
-    // raw pixel count: distance per frame depends on the frame rate, and this
-    // suite deliberately runs the renderer starved.
-    const travelFor = async (ms) => {
-      const from = { x: scene.me.x, y: scene.me.y };
+    // Counted in frames, not milliseconds. Movement integrates Phaser's delta,
+    // which Phaser caps — so in this deliberately starved renderer a frame
+    // always advances the player by the same ~15ms of simulated time however
+    // long it actually took. A wall-clock window therefore measures how many
+    // frames the machine managed to render, which is noise; a frame count
+    // measures the thing under test.
+    const travelFrames = async (frames) => {
       let total = 0;
-      let last = from;
-      const until = performance.now() + ms;
-      while (performance.now() < until) {
+      let last = { x: scene.me.x, y: scene.me.y };
+      for (let i = 0; i < frames; i++) {
         await new Promise((r) => requestAnimationFrame(r));
         total += Math.hypot(scene.me.x - last.x, scene.me.y - last.y);
         last = { x: scene.me.x, y: scene.me.y };
@@ -427,11 +428,11 @@ await step('auto-move drives the client with no input at all', async () => {
     };
 
     settings.set('autoMove', false);
-    const parkedTravel = await travelFor(900);
+    const parkedTravel = await travelFrames(30);
 
     settings.set('autoMove', true);
     const start = { x: scene.me.x, y: scene.me.y };
-    const travelled = await travelFor(900);
+    const travelled = await travelFrames(30);
     const enemies = scene.enemies.size;
 
     // Real input has to win, or a human cannot take a self-driving client back
@@ -465,7 +466,7 @@ await step('auto-move drives the client with no input at all', async () => {
       out.drivenRight &&
       out.stillAfterOff < 2 &&
       out.finite,
-    note: `${out.parkedTravel.toFixed(0)}px parked → ${out.travelled.toFixed(0)}px self-driving over the same window (${out.enemies} hostiles), ${out.stillAfterOff.toFixed(1)}px once off`,
+    note: `${out.parkedTravel.toFixed(0)}px parked → ${out.travelled.toFixed(0)}px self-driving over the same 30 frames (${out.enemies} hostiles), ${out.stillAfterOff.toFixed(1)}px once off`,
   };
 });
 
@@ -587,7 +588,14 @@ await step('firing produces damage reports (attacker authority)', async () => {
 });
 
 await step('ability fields reach the wire', async () => {
-  const before = await page.evaluate(() => window.__published.filter((m) => m.topic.endsWith('/ability')).length);
+  // Establish the precondition rather than inherit it. The auto-move step above
+  // leaves the autopilot in charge for a while, and the autopilot spends its
+  // ability the moment anything is in reach — so by the time this runs the
+  // cooldown may well be mid-way through its twenty seconds.
+  const before = await page.evaluate(() => {
+    window.glitchburst.game.scene.getScene('game').abilityCooldown = 0;
+    return window.__published.filter((m) => m.topic.endsWith('/ability')).length;
+  });
   await page.keyboard.press('Space');
   await page.waitForTimeout(400);
   const after = await page.evaluate(() => window.__published.filter((m) => m.topic.endsWith('/ability')).length);
@@ -854,6 +862,16 @@ await step('heap expansion raises the live maximum and arrives filled', async ()
     const progress = scene.progression.progress;
     clearInterval(window.__keepAlive);
 
+    // Banish the horde for the duration. The window below is two frames wide and
+    // a single Glitch Bug touch is 6.9 damage, which lands right on top of the
+    // number being measured — the same flake the regen test had to fix.
+    for (const view of scene.enemies.values()) {
+      view.sprite.x = 40;
+      view.sprite.y = 40;
+      const enemy = scene.horde?.enemies.get(view.id);
+      if (enemy) { enemy.x = 40; enemy.y = 40; }
+    }
+
     // Hurt, so the top-up is measurable. A power-up that hands you headroom you
     // then have to earn back is felt as nothing at the moment you take it.
     scene.me.hp = 30;
@@ -1076,6 +1094,8 @@ await step('a solo run ends after three reboots, each the same flat wait', async
 await step('a reboot never puts you back inside the swarm', async () => {
   const out = await page.evaluate(async ({ safe, world }) => {
     const scene = window.glitchburst.game.scene.getScene('game');
+    const WORLD_W = world.width;
+    const WORLD_H = world.height;
     clearInterval(window.__keepAlive);
 
     // Hold the horde still for the duration. Waves stream in now, so without
@@ -1139,13 +1159,25 @@ await step('a reboot never puts you back inside the swarm', async () => {
 
     // And the clamping path: dying in a corner means half the search ring is
     // outside the arena, and a relocation must never land there.
+    //
+    // A bounded pile, not the whole field. What this case is testing is the
+    // clamp; how far a hundred stacked enemies get spread by the separation
+    // pass is the mid-arena case's business, and letting the pile size vary
+    // with however the run happened to go made the clearance below wobble by a
+    // hundred pixels between runs for reasons that had nothing to do with the
+    // relocation. The rest are parked far away so they neither crowd the corner
+    // nor the answer.
     scene.me.x = 30;
     scene.me.y = 30;
+    let piled = 0;
     for (const [id, view] of scene.enemies) {
-      view.tx = 60; view.ty = 60;
-      view.sprite.setPosition(60, 60);
+      const inPile = piled++ < 8;
+      const px = inPile ? 60 : WORLD_W - 80;
+      const py = inPile ? 60 : WORLD_H - 80;
+      view.tx = px; view.ty = py;
+      view.sprite.setPosition(px, py);
       const live = scene.horde?.enemies.get(id);
-      if (live) { live.x = 60; live.y = 60; live.stun = 5; }
+      if (live) { live.x = px; live.y = py; live.stun = 5; }
     }
     scene.deaths = 0;
     scene.gameOver = false;

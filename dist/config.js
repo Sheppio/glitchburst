@@ -22,9 +22,43 @@ export const NET = {
     heartbeatHz: 2,
     /** No heartbeat for this long => the host is presumed dead and an election runs. */
     hostTimeoutMs: 2500,
-    /** Presence ping interval; peers silent for 3x this are dropped from the roster. */
+    /** Presence ping interval. */
     presenceMs: 1000,
-    presenceTimeoutMs: 5000,
+    /**
+     * Silence for this long drops a peer from the roster.
+     *
+     * Fifteen seconds, not five, because this timeout is a *backstop* rather than
+     * the way departures are noticed. A player who closes the tab, crashes or
+     * loses the network is de-listed immediately by the MQTT will, and one who
+     * leaves deliberately publishes `alive: 0` on the way out. What is left for
+     * the timeout to catch is a client that is alive but has gone quiet — and
+     * five seconds of quiet is something a browser hands out for free: a garbage
+     * collection pause, a tab the OS has decided is not visible, or simply four
+     * self-driving clients on one laptop all simulating a hundred enemies.
+     *
+     * Dropping a live player is not a cosmetic error. It shrinks the squad, which
+     * changes the reboot rules, and it can make a client believe it is the last
+     * one standing and start running its own horde — at which point the room has
+     * quietly become two rooms on different waves.
+     */
+    presenceTimeoutMs: 15000,
+    /**
+     * A gap this long between roster ticks means *we* stopped running, and every
+     * timeout is measured from a clock that was not moving.
+     *
+     * Browsers freeze the update loop of a tab that is not visible, and throttle
+     * its timers to a crawl. Someone testing multiplayer has four clients open
+     * and at most one of them in front; on any machine, a tab that has been
+     * behind another for a while comes back to a roster full of players it last
+     * heard from a minute ago. Dropping them all on the first tick after waking
+     * is the single worst thing this client can do, because a shrunken roster
+     * changes the reboot rules and can promote it to host of a room that already
+     * has one.
+     *
+     * Time we spent asleep is not evidence about anybody else, so it is forgiven:
+     * everyone gets a fresh window to prove they are still there.
+     */
+    stallForgivenessMs: 2000,
     /** Enemy damage events are coalesced into one message per this many ms to spare the broker. */
     damageFlushMs: 60,
     keepaliveSec: 30,

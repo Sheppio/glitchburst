@@ -44,6 +44,8 @@ export interface Enemy extends Vec2 {
   vx: number;
   vy: number;
   speed: number;
+  /** Seconds this enemy has been on the field. Drives `enrageScale`. */
+  age: number;
   /** Seconds until this enemy may fire again (drones only). */
   cooldown: number;
   /** Seconds of remaining stun from a Fireman shockwave. */

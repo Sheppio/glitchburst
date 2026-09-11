@@ -6,12 +6,13 @@ import { Topics, segment } from '../net/topics.js';
 import { CLASSES, classDps } from '../sim/classes.js';
 import { ENEMY_DEFS } from '../sim/enemyTypes.js';
 import { clampLevel, killScore } from '../sim/enemyLevels.js';
+import { enrageProgress } from '../sim/enrage.js';
 import { summaryRows, sumPlayerStats } from '../sim/stats.js';
 import { HordeEngine } from '../sim/HordeEngine.js';
 import { UPGRADES, UPGRADE_ORDER } from '../sim/progression.js';
 import { colourOf, DEFAULT_COLOUR } from '../sim/palette.js';
 import { pickTarget } from '../sim/targeting.js';
-import { autopilotMove } from '../sim/autopilot.js';
+import { autopilotMove, smoothHeading } from '../sim/autopilot.js';
 import { EnemyKind, FLAG_ABILITY, FLAG_DOWN, FLAG_FIRING } from '../types.js';
 import { approachAngle, clamp, counterId, dist2, lerpAngle, segmentDist2 } from '../util.js';
 import { DAMAGE_RED, Fx } from './fx.js';
@@ -21,6 +22,10 @@ import { orderSquad } from './squadOrder.js';
 import { edgeMarker } from './edgeMarkers.js';
 import { ProgressionSystem } from './Progression.js';
 import { TEX } from './textures.js';
+/** Quantisation of the enrage tell: sixteen steps across the whole curve. */
+const HEAT_STEPS = 16;
+/** Sprite scale for a given enrage step. Shared so the hit flash lands on it too. */
+const heatScale = (step) => 1 + (step > 0 ? step / HEAT_STEPS : 0) * 0.12;
 /**
  * The game.
  *
@@ -56,6 +61,19 @@ export class GameScene extends Phaser.Scene {
      * asked for, so it is re-read rather than captured once.
      */
     colourId = DEFAULT_COLOUR;
+    /**
+     * Last heading the autopilot actually drove, and when it drove it. The policy
+     * is stateless by design, so the memory lives here.
+     *
+     * Timed off `performance.now()` rather than Phaser's delta, for the third
+     * time in this codebase: Phaser smooths and caps the delta it hands to
+     * `update`, so a starved renderer running at 5fps still reports 15ms a frame.
+     * Feeding that to an exponential smoother stretches an 80ms ease into a
+     * second of real time — the self-driving client visibly crawled away from a
+     * standing start. The run clock and the HUD-resize watcher hit the same wall.
+     */
+    autoHeading = { x: 0, y: 0 };
+    autoHeadingAt = 0;
     get tint() {
         return colourOf(this.colourId).colour;
     }
@@ -152,6 +170,20 @@ export class GameScene extends Phaser.Scene {
     downedFor = 0;
     /** Times this player has been reduced to zero health this run. */
     deaths = 0;
+    /**
+     * Deaths already spent when this client last found itself alone in the room,
+     * and whether it was in a squad on the previous frame.
+     *
+     * A run that drops from squad to solo must not have the solo budget applied
+     * retroactively. In a squad there is no death limit at all — you come back
+     * for as long as somebody is standing — so a long co-op run racks up deaths
+     * freely. Comparing that total against three the instant the roster shrinks
+     * ends the run on the spot, which is exactly what a moment of presence
+     * silence used to do: four self-driving clients, one stall, and two of them
+     * hit System Failure within seconds of each other while the rest played on.
+     */
+    soloFromDeaths = 0;
+    wasInSquad = false;
     gameOver = false;
     tornDown = false;
     score = 0;
@@ -358,6 +390,7 @@ export class GameScene extends Phaser.Scene {
     /* ------------------------------------------------------------ local play */
     updateLocalPlayer(dt) {
         const { input } = this.cfg;
+        this.trackSquadSize();
         this.syncMaxHealth();
         this.syncColour();
         const cam = this.cameras.main;
@@ -628,11 +661,22 @@ export class GameScene extends Phaser.Scene {
         this.cfg.sfx.hit();
         enemy.sprite.setTintFill(DAMAGE_RED);
         enemy.sprite.setScale(1.22);
-        this.tweens.add({ targets: enemy.sprite, scale: 1, duration: 130, ease: 'Cubic.easeOut' });
+        // Back to the enrage size, not to 1: an enraged enemy that shrank every
+        // time it was shot would flicker between two sizes under sustained fire.
+        this.tweens.add({
+            targets: enemy.sprite,
+            scale: heatScale(enemy.heat),
+            duration: 130,
+            ease: 'Cubic.easeOut',
+        });
         this.time.delayedCall(80, () => {
             // The enemy may have died and been destroyed inside this window.
-            if (enemy.sprite.scene)
-                enemy.sprite.clearTint();
+            if (!enemy.sprite.scene)
+                return;
+            enemy.sprite.clearTint();
+            // `clearTint` resets to white, which wipes the enrage wash along with the
+            // flash. Invalidating the cached step puts it back on the next frame.
+            enemy.heat = -1;
         });
     }
     /** Coalesced so a shotgun blast is one message per enemy, not one per pellet. */
@@ -744,7 +788,26 @@ export class GameScene extends Phaser.Scene {
     canReboot() {
         if (this.cfg.room.squadSize > 1)
             return !this.squadWiped();
-        return this.deaths <= LIVES.soloReboots;
+        return this.soloDeaths() <= LIVES.soloReboots;
+    }
+    /**
+     * Deaths that count against the solo pool.
+     *
+     * Rebased at the moment this client became alone, so the three reboots are
+     * three reboots *from then* rather than a bill for a co-op run that has
+     * already been paid in full by teammates staying upright.
+     */
+    soloDeaths() {
+        return this.deaths - this.soloFromDeaths;
+    }
+    /** Notice the room emptying, so the solo pool starts from now. */
+    trackSquadSize() {
+        const inSquad = this.cfg.room.squadSize > 1;
+        if (inSquad === this.wasInSquad)
+            return;
+        this.wasInSquad = inSquad;
+        if (!inSquad)
+            this.soloFromDeaths = this.deaths;
     }
     squadmatesAlive() {
         let alive = 0;
@@ -800,7 +863,7 @@ export class GameScene extends Phaser.Scene {
     rebootsLeft() {
         if (this.cfg.room.squadSize > 1)
             return null;
-        return Math.max(0, LIVES.soloReboots - this.deaths);
+        return Math.max(0, LIVES.soloReboots - this.soloDeaths());
     }
     rebootDelay() {
         // Solo is flat: the pool of three reboots is already the escalating cost,
@@ -905,12 +968,22 @@ export class GameScene extends Phaser.Scene {
             moveSpeed: this.def.speed * this.progression.progress.speedMultiplier,
             world: { width: WORLD.width, height: WORLD.height },
         });
+        // Eased into, not snapped to. The policy re-decides from scratch every
+        // frame and two of its choices are discrete, so the raw heading flickers —
+        // which on screen is a player vibrating rather than running.
+        const now = performance.now();
+        // A quarter second caps the first frame and any gap after a backgrounded
+        // tab: at that length the ease is 96% complete in one step, which is the
+        // right answer — there is nothing to smooth across a pause.
+        const elapsed = this.autoHeadingAt === 0 ? 1 / 60 : (now - this.autoHeadingAt) / 1000;
+        this.autoHeadingAt = now;
+        this.autoHeading = smoothHeading(this.autoHeading, move, Math.min(0.25, elapsed));
         // Spend the ability the moment it is up and something is in reach. A bot
         // that hoards its cooldown never exercises the ability wire path, which is
         // half of what a test client is for.
         const ability = this.abilityCooldown <= 0 &&
             enemies.some((e) => dist2(e.x, e.y, this.me.x, this.me.y) < 420 * 420);
-        return { x: move.x, y: move.y, ability };
+        return { x: this.autoHeading.x, y: this.autoHeading.y, ability };
     }
     respawn() {
         // Full health. A partial reboot straight back into the wave that killed you
@@ -1105,6 +1178,7 @@ export class GameScene extends Phaser.Scene {
      * host and peers cannot drift apart visually.
      */
     interpolateEnemies(deltaMs) {
+        const now = performance.now();
         for (const view of this.enemies.values()) {
             glide(view.sprite, view.tx, view.ty, RENDER.enemyLerp, deltaMs, RENDER.snapDistance);
             if (view.kind !== EnemyKind.TrojanTank) {
@@ -1113,7 +1187,34 @@ export class GameScene extends Phaser.Scene {
                 if (dx * dx + dy * dy > 4)
                     view.sprite.setRotation(Math.atan2(dy, dx));
             }
+            this.showHeat(view, (now - view.bornAt) / 1000);
         }
+    }
+    /**
+     * The enrage tell: something that has been chasing you for half a minute
+     * should look like it.
+     *
+     * A tint and a size bump rather than an extra sprite. Adding an aura per
+     * enemy would double the display list at the hundred-enemy cap, which is the
+     * same trade already refused for the level pips — and for the same reason.
+     *
+     * The tint washes warm rather than going red: a full red multiply would flood
+     * the level pip at the centre of every enemy, and that pip is the only thing
+     * telling a player which of two identical drones is the dangerous one.
+     *
+     * Quantised to sixteen steps so a hundred sprites are not each having two
+     * properties written on every frame of the run.
+     */
+    showHeat(view, age) {
+        const step = Math.round(enrageProgress(age) * HEAT_STEPS);
+        if (step === view.heat)
+            return;
+        view.heat = step;
+        const heat = step / HEAT_STEPS;
+        // White leaves the texture alone; lerping the green and blue channels down
+        // from there warms it without touching the reds it already has.
+        view.sprite.setTint((255 << 16) | (Math.round(255 - heat * 96) << 8) | Math.round(255 - heat * 120));
+        view.sprite.setScale(heatScale(step));
     }
     /**
      * Health bars, drawn only for enemies that have actually been hurt.
@@ -1455,6 +1556,8 @@ export class GameScene extends Phaser.Scene {
             this.fx.spawnFlash(x, y, def.colour, def.radius);
         }
         const view = {
+            bornAt: performance.now(),
+            heat: 0,
             id, kind: def.kind, level: lvl, hp: def.hp, maxHp: def.hp,
             sprite, tx: x, ty: y, seen: this.snapshotTick,
         };
