@@ -127,6 +127,62 @@ await step('deploying reaches the lobby from the pad', async () => {
   return { ok: (await screen()) === 'lobby' && roster.length === 1, note: `roster: ${roster.join(', ')}` };
 });
 
+await step('the program cycles in place from the pad', async () => {
+  // A native select popup is drawn by the browser chrome, where a pad cannot
+  // reach — so the staging area's program picker has to step its options in
+  // place. That is also exactly the "cycle through the classes" this control
+  // exists to offer.
+  const before = await page.evaluate(() => ({
+    value: document.getElementById('select-lobby-class').value,
+    row: document.querySelector('.roster-class')?.textContent,
+  }));
+
+  const reached = await focusOn('select-lobby-class');
+  await press(BTN.RIGHT);
+  await page.waitForTimeout(200);
+  const forward = await page.evaluate(() => ({
+    value: document.getElementById('select-lobby-class').value,
+    row: document.querySelector('.roster-class')?.textContent,
+    card: document.querySelector('.class-card[aria-pressed="true"]')?.dataset.cls,
+  }));
+
+  await press(BTN.LEFT);
+  await page.waitForTimeout(200);
+  const back = await page.evaluate(() => document.getElementById('select-lobby-class').value);
+
+  return {
+    ok:
+      reached &&
+      forward.value !== before.value &&
+      forward.row !== before.row &&
+      forward.card === forward.value &&
+      back === before.value,
+    note: reached
+      ? `${before.value} → ${forward.value} → ${back}; roster row "${before.row}" → "${forward.row}"`
+      : `never reached the picker, ring stuck on ${await focus()}`,
+  };
+});
+
+await step('down alone reaches every control in the staging area', async () => {
+  // The ring is placed by geometry, and geometry has a way of quietly stranding
+  // things. A full-width field above a two-button row is directly above both of
+  // them; when that was scored by centre distance the nearer centre won by a
+  // handful of pixels, and pressing down from the program picker landed on
+  // Leave every single time. Start run — the point of the screen — could only
+  // be reached by knowing to press left.
+  const seen = new Set();
+  for (let i = 0; i < 12; i++) {
+    await press(BTN.DOWN);
+    seen.add(await focus());
+  }
+  const wanted = ['input-lobby-callsign', 'select-lobby-class', 'btn-start-run', 'btn-lobby-leave'];
+  const missed = wanted.filter((id) => !seen.has(id));
+  return {
+    ok: missed.length === 0,
+    note: missed.length ? `never reached: ${missed.join(', ')}` : `all four in ${seen.size} stops`,
+  };
+});
+
 await step('the host starts the run from the pad', async () => {
   await page.waitForSelector('#btn-start-run:not([hidden])', { timeout: 15000 });
   await focusOn('btn-start-run');

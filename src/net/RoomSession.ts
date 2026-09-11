@@ -112,7 +112,21 @@ export class RoomSession {
     return ids.sort();
   }
 
-  setClass(cls: ClassId): void {
+  /**
+   * Change how this client appears to the room, and say so immediately.
+   *
+   * Presence already republishes on a timer, but a lobby edit that took up to
+   * `NET.presenceMs` to show up on everyone else's roster would read as broken:
+   * the player changes program, looks at the squad list, and sees their old one
+   * still sitting there.
+   *
+   * The will is deliberately left alone. It carries `alive: 0` and exists only
+   * to de-list this client on a crash, which the id does — the name and class
+   * in it are never read for anything.
+   */
+  setIdentity(name: string, cls: ClassId): void {
+    if (name === this.name && cls === this.cls) return;
+    this.name = name;
     this.cls = cls;
     this.announcePresence();
   }

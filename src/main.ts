@@ -116,6 +116,15 @@ const ui = new UI(uiRoot, settings, {
     void deploy(cls);
   },
 
+  onIdentity(name, cls) {
+    lastClass = cls;
+    // Re-read the roster straight away rather than waiting for the next
+    // presence round trip: the edit is this client's own, and its row is drawn
+    // from local state, so there is nothing to wait for.
+    room?.setIdentity(sanitizeName(name), cls);
+    if (ui.screen === 'lobby') ui.setLobby(lobbyRoster(), room?.isHost ?? false);
+  },
+
   onStartRun() {
     startRun();
   },

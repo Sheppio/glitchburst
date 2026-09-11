@@ -411,6 +411,21 @@ body.console-platform .console-banner { display: flex; }
   line-height: 1;
 }
 
+/* Callsign and program, stacked above the roster.
+   One column rather than two side by side, and that is a navigation
+   requirement rather than a taste: the pad moves the ring by direction, and it
+   swallows left/right inside a text field because that is caret movement. A
+   select sitting to the right of the callsign was therefore reachable by no
+   press at all — down found the buttons below it, and right went nowhere.
+   Stacked, the ring walks callsign → program → start in a straight line. */
+.lobby-identity {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+}
+.lobby-identity .field { margin-bottom: 0; }
+.lobby-blurb { min-height: 17px; }
+
 .roster { display: grid; gap: 7px; margin: 20px 0 4px; }
 
 .roster-row {

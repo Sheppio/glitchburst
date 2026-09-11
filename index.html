@@ -169,6 +169,29 @@
             Anyone on the link joins this room directly.
           </p>
 
+          <!-- Editable here as well as on the character screen: the staging
+               area is where you sit waiting for the squad, and it is where you
+               come back to between runs. Changing program after a wipe without
+               leaving the room is the whole point. -->
+          <div class="lobby-identity">
+            <div class="field">
+              <label for="input-lobby-callsign">Callsign</label>
+              <input
+                id="input-lobby-callsign"
+                type="text"
+                maxlength="14"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="ANON"
+              />
+            </div>
+            <div class="field">
+              <label for="select-lobby-class">Program</label>
+              <select id="select-lobby-class"></select>
+            </div>
+          </div>
+          <p class="field-hint lobby-blurb" id="lobby-class-blurb"></p>
+
           <div class="roster" id="lobby-roster"></div>
 
           <div class="button-row">

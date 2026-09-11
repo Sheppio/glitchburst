@@ -1,6 +1,6 @@
 # GLITCHBURST
 
-<!-- version -->**v0.2.21**<!-- /version --> — the build currently on Pages.
+<!-- version -->**v0.2.22**<!-- /version --> — the build currently on Pages.
 
 A co-op top-down horde shooter that runs entirely in the browser. **No game server.**
 Every client talks to a public MQTT broker over WebSockets, and one of them
@@ -38,7 +38,7 @@ Developing needs the compiler:
 ```bash
 npm install
 npm run watch      # tsc --watch, rebuilding dist/ on save
-npm test           # 306 tests: simulation, codec, single client, mobile, controller, two clients
+npm test           # 324 tests: simulation, codec, single client, mobile, controller, two clients
 ```
 
 `dist/` is committed on purpose — it is what GitHub Pages serves.
@@ -401,12 +401,30 @@ for the same reason only the host can pause — the horde exists on exactly one
 machine, and a peer "starting" would be asking for a simulation nobody is
 running.
 
+Callsign and program are **editable in the staging area**, not just on the way
+in. That is the natural moment to change them: waiting for the squad before the
+first run, and — after a wipe drops everyone back here — deciding the Fireman
+was the wrong call. The edit goes straight back out on presence rather than
+waiting for the next republish, because the roster everyone reads is built from
+presence, and a player who changes program and still sees their old one on the
+squad list will reasonably conclude it did not work.
+
+Both the character screen's card grid and the staging area's picker write
+through one selection, so they cannot drift apart. The picker is a `select`
+cycled **in place** by the pad: a native dropdown is drawn by the browser
+chrome, where a controller cannot reach, and opening one on a console is a dead
+end with no way back.
+
 ### The debrief
 
 A finished run is **frozen, not veiled**: the host tick is stopped and the
 update loop returns early, because a horde still swarming behind the summary is
 both a distraction and, on the host, a match nobody is playing still being
 simulated and broadcast.
+
+The HUD's Pause and Leave sit **above** the veils, so a paused player can always
+get out — but both go away at System Failure. There is nothing left to pause,
+and a Leave floating over the card competes with the card's own way out.
 
 The summary is **the squad's, never per player**. This is a co-op game; splitting
 it turns "how did we do" into "who carried", which is the wrong question to
@@ -640,14 +658,14 @@ its spawn ring, never collects a chip, never earns a power-up and never reboots
 generate. Left alone for two minutes a self-driving client reaches wave 8, banks
 200-odd chips, takes seven upgrades and spends its reboots.
 
-The policy lives in `sim/autopilot.ts`, pure and headlessly testable. Three
-bands, chosen by the distance to the nearest hostile:
+The policy lives in `sim/autopilot.ts`, pure and headlessly testable. Two bands,
+chosen by the distance to the nearest hostile, and shopping on top of both:
 
 | | Behaviour |
 | --- | --- |
-| **Crowded** (< 240px) | find a way out |
-| **Out of range** (> 75% of weapon reach) | close in, so waves actually get cleared |
-| **In between** | go and collect chips |
+| **Crowded** (< 240px) | find a way out, tilted toward loot where the way out allows |
+| **Otherwise** | drift off anything closing in; close in when out of weapon range |
+| **Always** | go and collect, as long as the trip costs no safety |
 
 The first band is the interesting one. Summing repulsion vectors is the obvious
 approach and it fails exactly when it matters: surrounded, the pushes cancel,
@@ -662,6 +680,41 @@ with no weapon at all. The score is scaled by how far each step actually gets
 after clamping to the arena, which is what stops the bot picking a heading
 straight into a wall: cornering itself is the other classic way a retreating bot
 dies.
+
+#### Shopping
+
+Surviving is not the same as getting anywhere: a bot that kites beautifully and
+banks nothing reaches the same wave every run, because damage is the only thing
+that clears a wave faster than the next one arrives. So the bot buys its own
+progression.
+
+It picks one target rather than summing pulls — chips on opposite sides cancel,
+and a bot steered by the average of its options walks between them and collects
+neither. Targets are scored on value over distance, where value counts a chip's
+neighbours (a cluster is one trip for several chips) and an upgrade is worth ten
+chips, just over the going rate. Distance is the walk that actually remains
+after the magnet takes over, so a chip already inside the magnet is never chased
+— it is coming anyway. A pickup that cannot be reached before it expires is
+declined outright.
+
+Safety then multiplies the score, and the rule is deliberately relative: **a
+detour is fine as long as it does not bring the bot closer to a hostile than it
+is already standing.** That replaced a flat "no looting while threatened" gate
+which was both too strict — a chip at your feet in a safe direction was refused
+— and too blunt: a chip fifty pixels behind a drone was fine as long as the
+drone was 241px away, and the bot walked straight through it.
+
+Over a seeded 60-second run against a live horde with loot scattered across the
+arena:
+
+| | Chips banked | Upgrades taken | Time in contact |
+| --- | --- | --- | --- |
+| Before | 27 / 40 | **0 / 2** | 3% |
+| After | **38 / 40** | **2 / 2** | 5% |
+
+Both upgrades used to sit on the floor for their full 45 seconds and expire. The
+two extra points of contact time are what the shopping costs, and they are the
+reason the safety term exists at all.
 
 Real input always wins — any stick or key deflection overrides the autopilot
 that frame, so a human can take a self-driving client back without first
@@ -730,28 +783,28 @@ for a game — just don't build anything that needs privacy on top of it.
 npm test
 ```
 
-306 checks across five suites. The browser suites vendor Phaser locally and
+324 checks across five suites. The browser suites vendor Phaser locally and
 swap MQTT for a loopback stub that relays over `BroadcastChannel`, so two tabs
 share one "broker" and a real multi-client room can be tested offline.
 
-- **`sim.test.mjs`** (194) — codec round-trips, truncation tolerance, payload
+- **`sim.test.mjs`** (207) — codec round-trips, truncation tolerance, payload
   size at the cap, enemy cap, difficulty scaling, wave pacing, damage
   attribution, steering, decoy priority, host adoption, shockwave, progression
   and upgrade caps, deterministic drop rolls, turn-rate limiting, the auto-aim
   scoring formula, enemy levels and their health/reward curves, wave streaming
   and the tempo floor, the autopilot's steering bands and its survival against a
   live horde, and the audio volume curve.
-- **`smoke.test.mjs`** (46) — menus, settings persistence and migration, Phaser
+- **`smoke.test.mjs`** (47) — menus, settings persistence and migration, Phaser
   boot, election, 20 Hz batching, attacker-authority kills, point-blank hits,
   chip pickup and conversion, turn rate, abilities, pause, settings over a live
   match, and broadcast rate under a starved renderer.
-- **`gamepad.test.mjs`** (13) — the whole front end driven by a virtual pad and
+- **`gamepad.test.mjs`** (15) — the whole front end driven by a virtual pad and
   nothing else: no click, no keypress. Menu to match, the on-screen keyboard,
   the pause card, a slider, and back out again.
 - **`mobile.test.mjs`** (15) — an emulated Pixel with a touchscreen and no
   mouse: taps through the whole flow, and hit-tests that nothing invisible is
   covering the buttons.
-- **`multiplayer.test.mjs`** (38) — two clients: election, peer unpacking,
+- **`multiplayer.test.mjs`** (40) — two clients: election, peer unpacking,
   mid-game join, interpolation, squad scaling, seeing each other's fire, pause
   propagation, and **host failover** with the horde carried through.
 

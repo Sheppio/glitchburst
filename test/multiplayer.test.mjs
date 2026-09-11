@@ -281,6 +281,35 @@ check('host counts a squad of two', aSquad.squad === 2 && aSquad.engineSquad ===
   `room ${aSquad.squad}, engine ${aSquad.engineSquad}`);
 check('HUD reports squad size', (await a.textContent('#hud-players')).trim() === '2/4');
 
+/* ------------------------------------------------------------- identity */
+
+// The staging area lets a player rename themselves and switch program between
+// runs. That is only worth anything if the rest of the squad sees it: the
+// roster everyone reads is built from presence, so the edit has to go back out
+// on presence rather than waiting for the next join.
+await a.bringToFront();
+const beforeIdentity = await b.evaluate(() => {
+  const peer = [...window.glitchburst.room.peers.values()][0];
+  return { name: peer?.name, cls: peer?.cls };
+});
+await a.evaluate(() => window.glitchburst.room.setIdentity('RENAMED', 'glitcher'));
+const sawIdentity = await b
+  .waitForFunction(
+    () => [...window.glitchburst.room.peers.values()][0]?.name === 'RENAMED',
+    null, { timeout: 4000 },
+  )
+  .then(() => true)
+  .catch(() => false);
+const afterIdentity = await b.evaluate(() => {
+  const peer = [...window.glitchburst.room.peers.values()][0];
+  return { name: peer?.name, cls: peer?.cls };
+});
+check('a lobby rename reaches the rest of the squad',
+  sawIdentity && afterIdentity.name === 'RENAMED' && beforeIdentity.name !== 'RENAMED',
+  `${beforeIdentity.name} → ${afterIdentity.name}`);
+check('and so does a change of program', afterIdentity.cls === 'glitcher',
+  `${beforeIdentity.cls} → ${afterIdentity.cls}`);
+
 /* --------------------------------------------------------- seeing the squad */
 
 // Make the host fire, and confirm the peer actually renders those rounds.

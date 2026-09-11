@@ -321,21 +321,36 @@ function rectOf(el: HTMLElement): Rect {
  *
  * The perpendicular offset is weighted heavily so the ring prefers the element
  * directly ahead over one that is marginally closer but off to the side.
+ *
+ * "Directly ahead" is measured between spans, not centres. Centres get this
+ * wrong whenever the origin is wider than its neighbours: a full-width field
+ * sitting above a row of two buttons is directly above *both* of them, but its
+ * centre is a little nearer to one of them, and that few-pixel accident decided
+ * the whole traversal. In the staging area it meant pressing down from the
+ * program picker always landed on Leave and never on Start run — the primary
+ * action on the screen, unreachable without knowing to press left. Overlapping
+ * spans score a perpendicular offset of zero, which leaves a genuine tie, and
+ * ties fall to document order below because the scan runs in document order.
  */
+/** Distance between two 1-D spans, or zero where they overlap. */
+function spanGap(aLo: number, aHi: number, bLo: number, bHi: number): number {
+  return Math.max(0, aLo - bHi, bLo - aHi);
+}
+
 function directionalScore(dir: Direction, from: Rect, to: Rect): number {
-  const dx = to.cx - from.cx;
-  const dy = to.cy - from.cy;
+  const dx = spanGap(from.left, from.right, to.left, to.right);
+  const dy = spanGap(from.top, from.bottom, to.top, to.bottom);
   const EPSILON = 4;
 
   switch (dir) {
     case 'up':
-      return to.bottom <= from.top + EPSILON ? -dy + Math.abs(dx) * 2.2 : Infinity;
+      return to.bottom <= from.top + EPSILON ? from.cy - to.cy + dx * 2.2 : Infinity;
     case 'down':
-      return to.top >= from.bottom - EPSILON ? dy + Math.abs(dx) * 2.2 : Infinity;
+      return to.top >= from.bottom - EPSILON ? to.cy - from.cy + dx * 2.2 : Infinity;
     case 'left':
-      return to.right <= from.left + EPSILON ? -dx + Math.abs(dy) * 2.2 : Infinity;
+      return to.right <= from.left + EPSILON ? from.cx - to.cx + dy * 2.2 : Infinity;
     case 'right':
-      return to.left >= from.right - EPSILON ? dx + Math.abs(dy) * 2.2 : Infinity;
+      return to.left >= from.right - EPSILON ? to.cx - from.cx + dy * 2.2 : Infinity;
   }
 }
 

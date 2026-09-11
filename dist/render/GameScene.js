@@ -816,10 +816,20 @@ export class GameScene extends Phaser.Scene {
         for (const view of this.enemies.values()) {
             enemies.push({ x: view.sprite.x, y: view.sprite.y });
         }
+        // Chips and upgrades both carry their remaining life, so the bot can turn
+        // down a trip it cannot finish. Progression is not optional for a bot meant
+        // to get somewhere: a run with no upgrades stalls at the same wave whoever
+        // is driving it, and a power-up left on the floor to expire is the single
+        // most expensive mistake available.
         const chips = [];
         for (const chip of this.progression.chips.items) {
             if (chip.active)
-                chips.push({ x: chip.x, y: chip.y });
+                chips.push({ x: chip.x, y: chip.y, ttl: chip.ttl });
+        }
+        const powerUps = [];
+        for (const powerUp of this.progression.powerUps.items) {
+            if (powerUp.active)
+                powerUps.push({ x: powerUp.x, y: powerUp.y, ttl: powerUp.ttl });
         }
         const w = this.def.weapon;
         const move = autopilotMove({
@@ -827,7 +837,9 @@ export class GameScene extends Phaser.Scene {
             y: this.me.y,
             enemies,
             chips,
+            powerUps,
             weaponRange: w.speed * w.lifeSec,
+            moveSpeed: this.def.speed * this.progression.progress.speedMultiplier,
             world: { width: WORLD.width, height: WORLD.height },
         });
         // Spend the ability the moment it is up and something is in reach. A bot

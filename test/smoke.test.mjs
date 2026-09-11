@@ -1199,6 +1199,9 @@ await step('the failure screen debriefs the squad and hands back to the lobby', 
     scene.kills = 40;
     scene.runSeconds = 185;
     scene.deaths = 99;                 // past the solo allowance: the next death ends it
+    // Captured while the run is still live, so hiding them afterwards proves
+    // something: this client is the host, so Pause is on screen right now.
+    const pauseWasShown = !document.getElementById('btn-pause').hidden;
     scene.me.hp = 1;
     scene.takeDamage(9999);
     await new Promise((r) => requestAnimationFrame(r));
@@ -1208,6 +1211,14 @@ await step('the failure screen debriefs the squad and hands back to the lobby', 
       dt.textContent,
       document.querySelectorAll('#over-summary dd')[i]?.textContent,
     ]);
+
+    // The HUD actions sit above the veils by design, so a paused player can
+    // still leave — but the run is over here. Pause has nothing left to pause,
+    // and Leave is a second exit competing with the card's own.
+    const actions = {
+      pause: document.getElementById('btn-pause').hidden,
+      leave: document.getElementById('btn-leave').hidden,
+    };
 
     // A finished run is frozen, not merely veiled — the horde used to carry on
     // swarming behind the card the squad is trying to read.
@@ -1219,6 +1230,8 @@ await step('the failure screen debriefs the squad and hands back to the lobby', 
       veiled: !document.getElementById('over-veil').hidden,
       rows: Object.fromEntries(rows),
       wasMoving,
+      pauseWasShown,
+      actions,
       frozen: before === after && before.length > 0,
       hostLoopStopped: scene.hostTimer === 0,
     };
@@ -1230,6 +1243,9 @@ await step('the failure screen debriefs the squad and hands back to the lobby', 
     out.rows['Malware purged'] === '40' &&
     out.rows['Uptime'] === '3:05' &&
     out.wasMoving &&
+    out.pauseWasShown &&
+    out.actions.pause &&
+    out.actions.leave &&
     out.frozen &&
     out.hostLoopStopped;
 
@@ -1239,7 +1255,9 @@ await step('the failure screen debriefs the squad and hands back to the lobby', 
       ? 'no failure screen'
       : !out.wasMoving
         ? 'the horde was not moving beforehand, so freezing it proves nothing'
-        : `9 rows, uptime ${out.rows['Uptime']}, horde ${out.frozen ? 'frozen' : 'STILL RUNNING'}, host tick ${out.hostLoopStopped ? 'stopped' : 'ALIVE'}`,
+        : !out.pauseWasShown
+          ? 'Pause was already hidden before the wipe, so hiding it proves nothing'
+          : `9 rows, uptime ${out.rows['Uptime']}, horde ${out.frozen ? 'frozen' : 'STILL RUNNING'}, host tick ${out.hostLoopStopped ? 'stopped' : 'ALIVE'}, HUD actions ${out.actions.pause && out.actions.leave ? 'hidden' : 'STILL OVER THE CARD'}`,
   };
 });
 
@@ -1255,6 +1273,69 @@ await step('return to lobby keeps the room and drops the match', async () => {
   return {
     ok: !out.game && out.connected && out.roster === 1 && out.canStart,
     note: `match ${out.game ? 'still up' : 'torn down'}, room ${out.connected ? 'kept' : 'LOST'}, ${out.roster} in the roster`,
+  };
+});
+
+await step('the staging area edits the callsign and cycles the program', async () => {
+  const before = await page.evaluate(() => ({
+    name: document.querySelector('.roster-name')?.textContent,
+    cls: document.querySelector('.roster-class')?.textContent,
+    program: document.getElementById('select-lobby-class').value,
+  }));
+
+  await page.fill('#input-lobby-callsign', 'REWIRED');
+
+  // Cycled the way the control is meant to be used — the navigator drives a
+  // select by changing its value, not by opening the native popup.
+  const picked = await page.evaluate(() => {
+    const select = document.getElementById('select-lobby-class');
+    const next = [...select.options].map((o) => o.value).find((v) => v !== select.value);
+    select.value = next;
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    return next;
+  });
+
+  // Past the announce debounce, which exists so a public broker does not get
+  // one presence message per letter typed.
+  await page.waitForTimeout(600);
+
+  const after = await page.evaluate(() => ({
+    name: document.querySelector('.roster-name')?.textContent,
+    cls: document.querySelector('.roster-class')?.textContent,
+    // The character screen and the staging area are two controls over one
+    // choice; they must not drift apart.
+    mirrored: document.getElementById('input-callsign').value,
+    card: document.querySelector('.class-card[aria-pressed="true"]')?.dataset.cls,
+    stored: localStorage.getItem('glitchburst.callsign'),
+    storedClass: localStorage.getItem('glitchburst.class'),
+  }));
+
+  // The payoff: the next run is actually played as the program just chosen.
+  await page.click('#btn-start-run');
+  await page.waitForFunction(() => window.glitchburst.game !== null, null, { timeout: 10000 });
+  await page.waitForFunction(
+    () => window.glitchburst.game.scene.getScene('game')?.def !== undefined,
+    null, { timeout: 10000 },
+  );
+  const run = await page.evaluate(() => {
+    const scene = window.glitchburst.game.scene.getScene('game');
+    return { cls: scene.def.id, name: scene.cfg.playerName };
+  });
+
+  const ok =
+    before.program !== picked &&
+    after.name === 'REWIRED (you)' &&
+    after.cls !== before.cls &&
+    after.mirrored === 'REWIRED' &&
+    after.card === picked &&
+    after.stored === 'REWIRED' &&
+    after.storedClass === picked &&
+    run.cls === picked &&
+    run.name === 'REWIRED';
+
+  return {
+    ok,
+    note: `${before.name} → ${after.name}, ${before.cls} → ${after.cls}; run deployed as ${run.cls}/${run.name} (wanted ${picked}/REWIRED)`,
   };
 });
 

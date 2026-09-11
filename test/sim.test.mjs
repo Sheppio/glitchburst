@@ -584,6 +584,166 @@ const run = (engine, seconds, t = targets(1)) => {
 }
 
 {
+  /* ------------------------------------------------ autopilot: shopping */
+  //
+  // Surviving is not the same as getting anywhere. A bot that kites beautifully
+  // and never banks a chip reaches the same wave every run, because damage is
+  // the only thing that clears a wave faster than the next one arrives.
+
+  const world = { width: 2400, height: 1600 };
+  const drive = (over) =>
+    autopilotMove({ x: 1200, y: 800, enemies: [], chips: [], weaponRange: 600, world, ...over });
+  const towards = (v, tx, ty) => v.x * (tx - 1200) + v.y * (ty - 800) > 0;
+
+  // An upgrade on the floor is worth more than any realistic pile of chips: it
+  // is a permanent multiplier, it costs eight chips and rising to buy, and
+  // unlike the chips it will not be there in a minute.
+  const upgrade = drive({
+    chips: [{ x: 900, y: 800 }, { x: 860, y: 840 }, { x: 880, y: 760 }],
+    powerUps: [{ x: 1800, y: 800 }],
+  });
+  check('a dropped upgrade outbids a nearer pile of chips', towards(upgrade, 1800, 800),
+    `heading (${upgrade.x.toFixed(2)}, ${upgrade.y.toFixed(2)})`);
+
+  // One trip, several chips. The nearest chip is the wrong target when three
+  // more are sitting together slightly further out.
+  const cluster = drive({
+    chips: [
+      { x: 1200, y: 500 },
+      { x: 1500, y: 800 }, { x: 1560, y: 860 }, { x: 1620, y: 790 }, { x: 1580, y: 730 },
+    ],
+  });
+  check('a cluster is preferred to a closer lone chip', cluster.x > 0.5,
+    `heading (${cluster.x.toFixed(2)}, ${cluster.y.toFixed(2)})`);
+
+  // The magnet does the last 175px, so a chip inside it is already yours.
+  // Steering at one pins the bot in place while it flies in.
+  const latched = drive({ chips: [{ x: 1300, y: 800 }] });
+  check('a chip already inside the magnet is not chased',
+    latched.x === 0 && latched.y === 0, `heading (${latched.x}, ${latched.y})`);
+
+  // Chips live 26 seconds and power-ups 45. A sprint that ends after the thing
+  // has evaporated spends the time and gives up the ground for nothing.
+  const doomed = drive({ chips: [{ x: 1200, y: 1400, ttl: 1.5 }], moveSpeed: 290 });
+  check('loot that cannot be reached before it expires is left alone',
+    doomed.x === 0 && doomed.y === 0, '1.5s of life against a 1.5s walk');
+  const reachable = drive({ chips: [{ x: 1200, y: 1400, ttl: 20 }], moveSpeed: 290 });
+  check('...but the same chip with time on it is collected', towards(reachable, 1200, 1400));
+
+  // What makes a trip safe is the ground it crosses, not how far away the
+  // threat happens to be. The old rule only asked the second question — with a
+  // drone 300px off, a chip directly behind it was taken like any other, and
+  // the bot walked through the drone to get it. The pair below is the same
+  // threat at the same range and the same chip at the same distance; only the
+  // path differs.
+  const across = drive({ enemies: [{ x: 1500, y: 800 }], chips: [{ x: 1200, y: 1300, ttl: 20 }] });
+  check('a chip reached over clear ground is collected', across.y > 0.5,
+    `heading (${across.x.toFixed(2)}, ${across.y.toFixed(2)})`);
+  const through = drive({ enemies: [{ x: 1500, y: 800 }], chips: [{ x: 1700, y: 800, ttl: 20 }] });
+  check('a chip on the far side of the threat is left', through.x < 0,
+    `heading (${through.x.toFixed(2)}, ${through.y.toFixed(2)})`);
+
+  // Escaping and collecting are not always in conflict: most of the time
+  // several ways out are about as good as each other.
+  const flee = { enemies: [{ x: 1200, y: 700 }], chips: [{ x: 800, y: 820, ttl: 20 }] };
+  const biased = drive(flee);
+  check('a way out that runs over a chip is preferred to one that does not',
+    biased.x < -0.5, `heading (${biased.x.toFixed(2)}, ${biased.y.toFixed(2)})`);
+
+  // ...but the bias can never buy a heading into the swarm.
+  const walled = drive({
+    enemies: [{ x: 1340, y: 800 }, { x: 1380, y: 870 }, { x: 1360, y: 730 }],
+    chips: [{ x: 1700, y: 800, ttl: 20 }],
+  });
+  check('loot never talks the bot through a crowd', walled.x < 0,
+    `heading (${walled.x.toFixed(2)}, ${walled.y.toFixed(2)})`);
+
+  check('no loot input produces a NaN heading',
+    [
+      { chips: [{ x: 1200, y: 800 }], powerUps: [{ x: 1200, y: 800 }] },
+      { chips: [{ x: 1200, y: 800, ttl: 0 }], moveSpeed: 0 },
+      { powerUps: [{ x: 1200, y: 800, ttl: -1 }], moveSpeed: 290 },
+      { chips: [{ x: 0, y: 0, ttl: 20 }], enemies: [{ x: 0, y: 0 }], moveSpeed: 290 },
+    ].every((o) => {
+      const v = drive(o);
+      return Number.isFinite(v.x) && Number.isFinite(v.y) && Math.hypot(v.x, v.y) <= 1.0001;
+    }));
+}
+
+{
+  // Does it actually shop? Scatter loot across a live horde and count what gets
+  // banked. The policy that only collected while completely unthreatened took
+  // 12 of 40 chips and left both upgrades on the floor to expire; the trip has
+  // to be worth taking under pressure, or in a real run it is never taken.
+  const realRandom = Math.random;
+  let seed = 0x1f37b19d;
+  Math.random = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 0x100000000;
+  };
+
+  const engine = new HordeEngine();
+  const world = { width: 2400, height: 1600 };
+  let me = { x: 1200, y: 800 };
+  const speed = 290;
+  const dt = 1 / 60;
+  let contacts = 0;
+
+  const chips = Array.from({ length: 40 }, () => ({
+    x: 200 + Math.random() * 2000, y: 150 + Math.random() * 1300, ttl: 26, taken: false,
+  }));
+  const powerUps = [
+    { x: 400, y: 400, ttl: 45, taken: false },
+    { x: 2000, y: 1200, ttl: 45, taken: false },
+  ];
+  const live = (all) => all.filter((p) => !p.taken && p.ttl > 0);
+
+  for (let i = 0; i < 60 * 60; i++) {
+    const enemies = [...engine.enemies.values()].map((e) => ({ x: e.x, y: e.y }));
+    const move = autopilotMove({
+      x: me.x, y: me.y, enemies,
+      chips: live(chips), powerUps: live(powerUps),
+      weaponRange: 600, moveSpeed: speed, world,
+    });
+    me = {
+      x: Math.max(24, Math.min(world.width - 24, me.x + move.x * speed * dt)),
+      y: Math.max(24, Math.min(world.height - 24, me.y + move.y * speed * dt)),
+    };
+    engine.step(dt, [{ id: 'bot', x: me.x, y: me.y, priority: 1, alive: true }]);
+
+    // Chips are magnetic; upgrades have to be walked onto.
+    for (const chip of chips) {
+      chip.ttl -= dt;
+      if (!chip.taken && Math.hypot(chip.x - me.x, chip.y - me.y) < PROGRESSION.magnetRadius) chip.taken = true;
+    }
+    for (const powerUp of powerUps) {
+      powerUp.ttl -= dt;
+      if (!powerUp.taken && Math.hypot(powerUp.x - me.x, powerUp.y - me.y) < PROGRESSION.powerUpPickupRadius) {
+        powerUp.taken = true;
+      }
+    }
+
+    for (const e of engine.enemies.values()) {
+      if (Math.hypot(e.x - me.x, e.y - me.y) < 40) { contacts++; break; }
+    }
+  }
+
+  Math.random = realRandom;
+
+  const banked = chips.filter((c) => c.taken).length;
+  const upgrades = powerUps.filter((p) => p.taken).length;
+  const share = contacts / (60 * 60);
+
+  check('the bot banks the loot it walks past', banked >= 28,
+    `${banked} of 40 chips in 60s`);
+  check('and does not leave upgrades on the floor to expire', upgrades === 2,
+    `${upgrades} of 2 taken`);
+  // The whole point of the safety term: shopping must not cost survival.
+  check('shopping does not get it eaten', share < 0.2,
+    `${(share * 100).toFixed(0)}% of 60s spent in contact range while looting`);
+}
+
+{
   // The bot has to survive a real horde, not just point the right way. Run the
   // engine with an autopilot-driven player and check it is not simply eaten.
   //

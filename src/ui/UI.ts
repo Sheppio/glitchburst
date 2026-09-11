@@ -23,6 +23,14 @@ export interface UICallbacks {
   onCreateRoom(name: string): void;
   onJoinRoom(name: string, roomCode: string, brokerUrl: string): void;
   onDeploy(cls: ClassId): void;
+  /**
+   * Callsign or program changed in the staging area.
+   *
+   * Separate from `onDeploy` because the room is already joined by then: this
+   * is an edit to a presence the squad can already see, not a request to go
+   * and make one.
+   */
+  onIdentity(name: string, cls: ClassId): void;
   /** Host only: begin the run for the whole room. */
   onStartRun(): void;
   /** Leave the finished run behind and go back to the staging area. */
@@ -155,6 +163,8 @@ function readStoredClass(): ClassId {
 export class UI {
   private screens = new Map<ScreenId, HTMLElement>();
   private selectedClass: ClassId = readStoredClass();
+  /** Debounce handle for presence announcements while a callsign is typed. */
+  private identityTimer = 0;
   private bannerTimer = 0;
   private current: ScreenId = 'menu';
   /** Where "Done" goes back to. Settings is reachable from the menu and mid-match. */
@@ -178,6 +188,10 @@ export class UI {
     this.restoreCallsign();
     this.buildBrokerList();
     this.buildClassGrid();
+    this.buildLobbyClasses();
+    // Both program controls start showing the stored choice, which until now
+    // only the card grid reflected.
+    this.selectClass(this.selectedClass);
     this.buildToggles();
     this.buildSliders();
     this.syncSettings();
@@ -211,29 +225,58 @@ export class UI {
     return this.input('input-callsign').value.trim() || 'ANON';
   }
 
+  /** Every place the callsign can be typed. They are one value, not two. */
+  private callsignFields(): HTMLInputElement[] {
+    return [this.input('input-callsign'), this.input('input-lobby-callsign')];
+  }
+
   /**
-   * Remember the callsign across reloads.
+   * Remember the callsign across reloads, and keep both fields agreeing.
    *
    * Stored on input rather than on deploy, so a name typed and then abandoned
    * mid-flow is still there next time — the failure mode this fixes is retyping
    * your name on every refresh, and half-finished attempts count.
    */
   private restoreCallsign(): void {
-    const field = this.input('input-callsign');
+    let saved = '';
     try {
-      const saved = localStorage.getItem(CALLSIGN_KEY);
-      if (saved) field.value = saved;
+      saved = localStorage.getItem(CALLSIGN_KEY) ?? '';
     } catch {
       // Private browsing, or storage blocked. An empty field is a fine default.
     }
 
-    field.addEventListener('input', () => {
-      try {
-        localStorage.setItem(CALLSIGN_KEY, field.value.trim().slice(0, 14));
-      } catch {
-        /* nothing to do — this session just will not remember it */
-      }
-    });
+    for (const field of this.callsignFields()) {
+      if (saved) field.value = saved;
+
+      field.addEventListener('input', () => {
+        try {
+          localStorage.setItem(CALLSIGN_KEY, field.value.trim().slice(0, 14));
+        } catch {
+          /* nothing to do — this session just will not remember it */
+        }
+        for (const other of this.callsignFields()) {
+          if (other !== field) other.value = field.value;
+        }
+        this.announceIdentity();
+      });
+
+      // Committed, so the room hears it now rather than after the debounce.
+      field.addEventListener('change', () => this.announceIdentity(true));
+    }
+  }
+
+  /**
+   * Tell the room who we are now.
+   *
+   * Debounced while typing: presence carries the callsign, and announcing on
+   * every keystroke would put one message per letter on a shared public broker
+   * for a name the player is still in the middle of choosing.
+   */
+  private announceIdentity(now = false): void {
+    window.clearTimeout(this.identityTimer);
+    const send = (): void => this.callbacks.onIdentity(this.callsign, this.selectedClass);
+    if (now) send();
+    else this.identityTimer = window.setTimeout(send, 350);
   }
 
   show(screen: ScreenId): void {
@@ -447,9 +490,16 @@ export class UI {
 
     // Pause is host-only: peers see the veil but get no control, because the
     // horde they would be resuming does not run on their machine.
+    //
+    // Both HUD actions go away at System Failure. They sit above the veils by
+    // design — a paused player must still be able to leave — but the run is
+    // over by then: there is nothing left to pause, and the failure card
+    // carries its own way out. Leaving them floating over the card offers a
+    // control that does nothing and a second, competing exit.
     const pauseButton = this.el('btn-pause');
-    pauseButton.hidden = !s.canPause;
+    pauseButton.hidden = !s.canPause || s.gameOver;
     pauseButton.textContent = s.paused ? 'Resume' : 'Pause';
+    this.el('btn-leave').hidden = s.gameOver;
 
     const veil = this.el('pause-veil');
     if (veil.hidden === s.paused) veil.hidden = !s.paused;
@@ -615,6 +665,14 @@ export class UI {
     );
   }
 
+  /**
+   * The program choice, wherever it was made.
+   *
+   * There are two controls for it — the card grid on the character screen and
+   * the cycler in the staging area — and exactly one selection. Each writes
+   * through here, so picking in one place is visibly the same act as picking in
+   * the other rather than two settings that drift apart.
+   */
   private selectClass(id: ClassId): void {
     this.selectedClass = id;
     try {
@@ -625,6 +683,39 @@ export class UI {
     for (const card of this.root.querySelectorAll<HTMLElement>('.class-card')) {
       card.setAttribute('aria-pressed', String(card.dataset['cls'] === id));
     }
+
+    const select = this.el('select-lobby-class') as HTMLSelectElement;
+    if (select.value !== id) select.value = id;
+    const def = CLASSES[id];
+    this.text('lobby-class-blurb', `${def.role} · ${def.blurb}`);
+  }
+
+  /**
+   * The program cycler in the staging area.
+   *
+   * A select rather than a card grid: the panel is already crowded with the
+   * roster and the room code, and a select is the one control this project can
+   * drive from a keyboard, a touchscreen and a controller without writing three
+   * implementations — the navigator cycles it in place rather than opening the
+   * native popup, which is exactly the cycling behaviour wanted here.
+   */
+  private buildLobbyClasses(): void {
+    const select = this.el('select-lobby-class') as HTMLSelectElement;
+    select.replaceChildren(
+      ...CLASS_ORDER.map((id) => {
+        const option = document.createElement('option');
+        option.value = id;
+        option.textContent = CLASSES[id].name;
+        return option;
+      }),
+    );
+
+    select.addEventListener('change', () => {
+      if (!isClassId(select.value)) return;
+      this.sfx.click();
+      this.selectClass(select.value);
+      this.announceIdentity(true);
+    });
   }
 
   private buildToggles(): void {
