@@ -25,6 +25,7 @@ import { Topics, segment } from '../net/topics.js';
 import { CLASSES, classDps } from '../sim/classes.js';
 import type { ClassDef } from '../sim/classes.js';
 import { ENEMY_DEFS } from '../sim/enemyTypes.js';
+import { clampLevel } from '../sim/enemyLevels.js';
 import { HordeEngine } from '../sim/HordeEngine.js';
 import { UPGRADES, UPGRADE_ORDER } from '../sim/progression.js';
 import { pickTarget } from '../sim/targeting.js';
@@ -83,6 +84,8 @@ export interface GameSceneInit {
 interface EnemyView {
   id: EnemyId;
   kind: EnemyKind;
+  /** 1-7, from the wire. Picks the texture, which carries the level pip. */
+  level: number;
   hp: number;
   maxHp: number;
   sprite: Phaser.GameObjects.Image;
@@ -862,7 +865,9 @@ export class GameScene extends Phaser.Scene {
     // the host's own enemies stay smooth between 20Hz steps.
     this.snapshotTick++;
     for (const enemy of horde.enemies.values()) {
-      const view = this.enemies.get(enemy.id) ?? this.spawnEnemyView(enemy.id, enemy.kind, enemy.x, enemy.y);
+      const view =
+        this.enemies.get(enemy.id) ??
+        this.spawnEnemyView(enemy.id, enemy.kind, enemy.level, enemy.x, enemy.y);
       view.tx = enemy.x;
       view.ty = enemy.y;
       view.hp = enemy.hp;
@@ -873,7 +878,7 @@ export class GameScene extends Phaser.Scene {
 
     for (const event of result.events) {
       if (event.t === 'death') {
-        this.killEnemyView(event.id, event.x, event.y, event.kind);
+        this.killEnemyView(event.id, event.x, event.y, event.kind, event.level);
       } else if (event.t === 'shot') {
         this.spawnEnemyBullet(event.x, event.y, event.vx, event.vy, event.damage);
       } else if (event.t === 'wave') {
@@ -1067,7 +1072,7 @@ export class GameScene extends Phaser.Scene {
     this.snapshotTick++;
     for (const snap of decodeHorde(payload)) {
       let view = this.enemies.get(snap.id);
-      if (!view) view = this.spawnEnemyView(snap.id, snap.kind, snap.x, snap.y);
+      if (!view) view = this.spawnEnemyView(snap.id, snap.kind, snap.level, snap.x, snap.y);
       view.tx = snap.x;
       view.ty = snap.y;
       view.hp = snap.hp;
@@ -1089,7 +1094,7 @@ export class GameScene extends Phaser.Scene {
       switch (event.t) {
         case 'death':
           // Peers play the burst; the host already did when it resolved the kill.
-          if (!this.horde) this.killEnemyView(event.id, event.x, event.y, event.kind);
+          if (!this.horde) this.killEnemyView(event.id, event.x, event.y, event.kind, event.level);
           break;
         case 'shot':
           if (!this.horde) this.spawnEnemyBullet(event.x, event.y, event.vx, event.vy, event.damage);
@@ -1223,9 +1228,10 @@ export class GameScene extends Phaser.Scene {
 
   /* ----------------------------------------------------- entity bookkeeping */
 
-  private spawnEnemyView(id: EnemyId, kind: EnemyKind, x: number, y: number): EnemyView {
+  private spawnEnemyView(id: EnemyId, kind: EnemyKind, level: number, x: number, y: number): EnemyView {
     const def = ENEMY_DEFS[kind] ?? ENEMY_DEFS[EnemyKind.GlitchBug];
-    const sprite = this.add.image(x, y, TEX.enemy(def.kind)).setDepth(20);
+    const lvl = clampLevel(level);
+    const sprite = this.add.image(x, y, TEX.enemy(def.kind, lvl)).setDepth(20);
 
     // Materialise, rather than appear. Skipped for the first couple of seconds
     // so a client joining mid-wave does not play sixty of these at once — that
@@ -1236,12 +1242,15 @@ export class GameScene extends Phaser.Scene {
       this.fx.spawnFlash(x, y, def.colour, def.radius);
     }
 
-    const view: EnemyView = { id, kind: def.kind, hp: def.hp, maxHp: def.hp, sprite, tx: x, ty: y, seen: this.snapshotTick };
+    const view: EnemyView = {
+      id, kind: def.kind, level: lvl, hp: def.hp, maxHp: def.hp,
+      sprite, tx: x, ty: y, seen: this.snapshotTick,
+    };
     this.enemies.set(id, view);
     return view;
   }
 
-  private killEnemyView(id: EnemyId, x: number, y: number, kind: EnemyKind): void {
+  private killEnemyView(id: EnemyId, x: number, y: number, kind: EnemyKind, level: number): void {
     const view = this.enemies.get(id);
     const def = ENEMY_DEFS[kind] ?? ENEMY_DEFS[EnemyKind.GlitchBug];
     if (view) {
@@ -1250,7 +1259,7 @@ export class GameScene extends Phaser.Scene {
     }
     this.fx.enemyBurst(x, y, def.colour, kind === EnemyKind.TrojanTank ? 2 : 1);
     this.cfg.sfx.kill(kind === EnemyKind.TrojanTank);
-    this.progression.dropFrom(x, y, def, id);
+    this.progression.dropFrom(x, y, def, id, clampLevel(level));
   }
 
   /**

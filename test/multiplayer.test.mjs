@@ -108,6 +108,49 @@ check('peer horde matches the host within a couple of enemies',
 
 check('peer publishes no horde snapshots', bState.hordePublished === 0);
 
+/* --------------------------------------------------------- enemy levels */
+
+{
+  // Kind and level share one packed base36 field, so this is the test that
+  // catches a mis-packed level: the peer would render the wrong pip, and a
+  // promoted host would adopt the horde at the wrong difficulty.
+  const host = await a.evaluate(() => {
+    const scene = window.glitchburst.game.scene.getScene('game');
+    // Spawn one of each level through the engine's own spawn path, rather than
+    // editing live enemies: a level is fixed at spawn, so mutating one would
+    // test a transition the game never makes.
+    const wanted = {};
+    for (let level = 1; level <= 7; level++) {
+      const e = scene.horde.spawnAt(level % 6, 400 + level * 70, 400, level);
+      if (e) wanted[e.id] = level;
+    }
+    return wanted;
+  });
+
+  // Long enough for a snapshot to carry them and the peer to materialise them.
+  await b.waitForTimeout(900);
+
+  const peer = await b.evaluate((ids) => {
+    const scene = window.glitchburst.game.scene.getScene('game');
+    const out = {};
+    for (const id of Object.keys(ids)) {
+      const view = scene.enemies.get(id);
+      if (view) out[id] = { level: view.level, texture: view.sprite.texture.key };
+    }
+    return out;
+  }, host);
+
+  const seen = Object.keys(peer);
+  check('levels survive the packed kind field',
+    seen.length >= 4 && seen.every((id) => peer[id].level === host[id]),
+    `${seen.length} checked: ${seen.map((id) => `${host[id]}->${peer[id].level}`).join(' ')}`);
+
+  // The level has to reach the texture, or it is a number nobody can see.
+  check('the peer draws the pip for the level it received',
+    seen.every((id) => peer[id].texture.endsWith(`-${host[id]}`)),
+    seen.map((id) => peer[id].texture).join(', '));
+}
+
 /* -------------------------------------------------------- interpolation */
 
 const drift = await b.evaluate(async () => {

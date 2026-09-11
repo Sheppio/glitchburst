@@ -1,10 +1,11 @@
 import { CLASSES, CLASS_ORDER } from '../sim/classes.js';
 import { UPGRADES, UPGRADE_ORDER } from '../sim/progression.js';
 import { ENEMY_DEFS } from '../sim/enemyTypes.js';
+import { LEVEL_COLOURS, MAX_LEVEL } from '../sim/enemyLevels.js';
 import { EnemyKind } from '../types.js';
 export const TEX = {
     player: (cls) => `tex-player-${cls}`,
-    enemy: (kind) => `tex-enemy-${kind}`,
+    enemy: (kind, level) => `tex-enemy-${kind}-${level}`,
     bullet: 'tex-bullet',
     enemyBullet: 'tex-enemy-bullet',
     pixel: 'tex-pixel',
@@ -44,12 +45,19 @@ export function createTextures(scene) {
         drawPowerUp(scene, UPGRADES[id]);
     for (const id of CLASS_ORDER)
         drawPlayer(scene, id, CLASSES[id].colour, CLASSES[id].radius);
-    drawBug(scene);
-    drawDrone(scene);
-    drawTank(scene);
-    drawWraith(scene);
-    drawSpore(scene);
-    drawBrute(scene);
+    // Every kind at every level: 42 textures, drawn once at boot. The
+    // alternative — one body sprite plus a tinted pip sprite per enemy — would
+    // double the display list at the 100-enemy cap and add a position to sync
+    // every frame, to save a few hundred KB of texture memory we are not short
+    // of.
+    for (let level = 1; level <= MAX_LEVEL; level++) {
+        drawBug(scene, level);
+        drawDrone(scene, level);
+        drawTank(scene, level);
+        drawWraith(scene, level);
+        drawSpore(scene, level);
+        drawBrute(scene, level);
+    }
 }
 /** A single white texel. Particles tint it, so one texture covers every burst. */
 function drawPixel(scene) {
@@ -157,8 +165,30 @@ function drawPlayer(scene, cls, colour, radius) {
     g.generateTexture(TEX.player(cls), size, size);
     g.destroy();
 }
+/**
+ * The level pip: a coloured dot at the centre of every enemy.
+ *
+ * Always on a white disc with a dark rim, because the pip has to be read
+ * against six different body colours and in peripheral vision while something
+ * else is shooting at you. On white it only ever has to contrast with white,
+ * which is what makes a seven-step rainbow legible at this size.
+ *
+ * Drawn last, so it sits on top of whatever the body put in the middle.
+ */
+function levelPip(g, c, radius, level) {
+    // Sized off the body so it stays proportionate, but floored so it is still
+    // readable on a Packet Wraith and capped so it does not become the Ransom
+    // Brute's defining feature. The small kinds are where this is tightest: the
+    // pip has to be legible without swallowing the silhouette that tells you
+    // what you are shooting at.
+    const pip = Math.max(3.1, Math.min(7.5, radius * 0.27));
+    const colour = LEVEL_COLOURS[Math.max(0, Math.min(LEVEL_COLOURS.length - 1, level - 1))];
+    g.fillStyle(0xffffff, 1).fillCircle(c, c, pip + 1.9);
+    g.lineStyle(1.2, 0x0b1017, 0.55).strokeCircle(c, c, pip + 1.9);
+    g.fillStyle(colour, 1).fillCircle(c, c, pip);
+}
 /** Skittering Glitch Bug: small, angular, unstable. */
-function drawBug(scene) {
+function drawBug(scene, level) {
     const def = ENEMY_DEFS[EnemyKind.GlitchBug];
     const size = def.radius * 2 + 16;
     const c = size / 2;
@@ -173,11 +203,12 @@ function drawBug(scene) {
     g.closePath();
     g.fillPath();
     g.fillStyle(0xffffff, 1).fillCircle(c + def.radius * 0.25, c, 3);
-    g.generateTexture(TEX.enemy(EnemyKind.GlitchBug), size, size);
+    levelPip(g, c, def.radius, level);
+    g.generateTexture(TEX.enemy(EnemyKind.GlitchBug, level), size, size);
     g.destroy();
 }
 /** Rogue Firewall Drone: a hovering hexagonal shell with a hot aperture. */
-function drawDrone(scene) {
+function drawDrone(scene, level) {
     const def = ENEMY_DEFS[EnemyKind.FirewallDrone];
     const size = def.radius * 2 + 18;
     const c = size / 2;
@@ -199,11 +230,12 @@ function drawDrone(scene) {
     g.fillStyle(0xffffff, 1).fillCircle(c, c, def.radius * 0.45);
     g.fillStyle(def.colour, 1).fillCircle(c, c, def.radius * 0.24);
     g.fillStyle(def.colour, 1).fillRoundedRect(c + def.radius * 0.5, c - 3, def.radius * 0.7, 6, 3);
-    g.generateTexture(TEX.enemy(EnemyKind.FirewallDrone), size, size);
+    levelPip(g, c, def.radius, level);
+    g.generateTexture(TEX.enemy(EnemyKind.FirewallDrone, level), size, size);
     g.destroy();
 }
 /** Trojan Tank: heavy, plated, obviously slow. */
-function drawTank(scene) {
+function drawTank(scene, level) {
     const def = ENEMY_DEFS[EnemyKind.TrojanTank];
     const r = def.radius;
     // Sized from the cannon's muzzle (r * 1.35 from centre), not the hull.
@@ -219,11 +251,12 @@ function drawTank(scene) {
     g.moveTo(c + r * 0.1, c - r * 0.55).lineTo(c + r * 0.1, c + r * 0.55);
     g.strokePath();
     g.fillStyle(def.colour, 1).fillRoundedRect(c + r * 0.75, c - 5, r * 0.6, 10, 4);
-    g.generateTexture(TEX.enemy(EnemyKind.TrojanTank), size, size);
+    levelPip(g, c, def.radius, level);
+    g.generateTexture(TEX.enemy(EnemyKind.TrojanTank, level), size, size);
     g.destroy();
 }
 /** Packet Wraith: a lean double chevron. Reads as speed before anything else. */
-function drawWraith(scene) {
+function drawWraith(scene, level) {
     const def = ENEMY_DEFS[EnemyKind.PacketWraith];
     const r = def.radius;
     const size = Math.ceil(r * 1.9 + 8) * 2;
@@ -243,11 +276,12 @@ function drawWraith(scene) {
     chevron(r * 0.45, 1);
     g.fillStyle(def.colour, 0.55);
     chevron(-r * 0.55, 0.8);
-    g.generateTexture(TEX.enemy(EnemyKind.PacketWraith), size, size);
+    levelPip(g, c, def.radius, level);
+    g.generateTexture(TEX.enemy(EnemyKind.PacketWraith, level), size, size);
     g.destroy();
 }
 /** Spore Node: a spiked seed, visibly full of something waiting to get out. */
-function drawSpore(scene) {
+function drawSpore(scene, level) {
     const def = ENEMY_DEFS[EnemyKind.SporeNode];
     const r = def.radius;
     const size = Math.ceil(r * 1.6 + 8) * 2;
@@ -270,11 +304,12 @@ function drawSpore(scene) {
     // Two pale cells inside — the things it splits into.
     g.fillStyle(0xffffff, 0.85).fillCircle(c - r * 0.26, c - r * 0.1, r * 0.24);
     g.fillStyle(0xffffff, 0.85).fillCircle(c + r * 0.26, c + r * 0.14, r * 0.24);
-    g.generateTexture(TEX.enemy(EnemyKind.SporeNode), size, size);
+    levelPip(g, c, def.radius, level);
+    g.generateTexture(TEX.enemy(EnemyKind.SporeNode, level), size, size);
     g.destroy();
 }
 /** Ransom Brute: a heavy plated octagon with a padlock slot. */
-function drawBrute(scene) {
+function drawBrute(scene, level) {
     const def = ENEMY_DEFS[EnemyKind.RansomBrute];
     const r = def.radius;
     const size = Math.ceil(r * 1.35 + 10) * 2;
@@ -312,7 +347,8 @@ function drawBrute(scene) {
     g.fillStyle(0x0b1017, 0.85).fillRect(c - r * 0.06, c + r * 0.06, r * 0.12, r * 0.26);
     // Cannon.
     g.fillStyle(def.colour, 1).fillRoundedRect(c + r * 0.85, c - 6, r * 0.5, 12, 4);
-    g.generateTexture(TEX.enemy(EnemyKind.RansomBrute), size, size);
+    levelPip(g, c, def.radius, level);
+    g.generateTexture(TEX.enemy(EnemyKind.RansomBrute, level), size, size);
     g.destroy();
 }
 /** Glitcher decoy: a wireframe echo of a player chassis. */

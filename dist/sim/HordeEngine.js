@@ -2,6 +2,7 @@ import { AI, DIFFICULTY, HORDE, WORLD } from '../config.js';
 import { EnemyKind } from '../types.js';
 import { clamp, counterId, dist2 } from '../util.js';
 import { ALL_KINDS, ENEMY_DEFS } from './enemyTypes.js';
+import { clampLevel, levelHealthScale, levelRewardScale, rollLevel } from './enemyLevels.js';
 /**
  * The authoritative horde simulation. Runs on exactly one client at a time.
  *
@@ -87,6 +88,11 @@ export class HordeEngine {
             this.enemies.set(s.id, {
                 id: s.id,
                 kind: s.kind,
+                // The promoted peer read the level off the wire, so an adopted enemy
+                // keeps the pip it was already being drawn with — a handover that
+                // silently reset everything to level 1 would both look wrong and hand
+                // the squad a free difficulty cut.
+                level: clampLevel(s.level ?? 1),
                 x: s.x,
                 y: s.y,
                 vx: 0,
@@ -225,14 +231,24 @@ export class HordeEngine {
             if (e.hp <= 0) {
                 this.enemies.delete(id);
                 const def = ENEMY_DEFS[e.kind];
-                result.events.push({ t: 'death', id: e.id, x: e.x, y: e.y, kind: e.kind });
-                result.kills.push({ id: e.id, kind: e.kind, x: e.x, y: e.y, score: def.score, attacker: dmg.attacker });
-                // Spore Nodes burst into smaller processes where they fell.
+                result.events.push({ t: 'death', id: e.id, x: e.x, y: e.y, kind: e.kind, level: e.level });
+                result.kills.push({
+                    id: e.id,
+                    kind: e.kind,
+                    x: e.x,
+                    y: e.y,
+                    score: Math.round(def.score * levelRewardScale(e.level)),
+                    attacker: dmg.attacker,
+                });
+                // Spore Nodes burst into smaller processes where they fell. The spawn
+                // inherits the parent's level: a level 6 node bursting into level 1
+                // fodder would make killing the tough thing a way to make the wave
+                // easier than leaving it alone.
                 for (let n = 0; n < (def.splitInto ?? 0); n++) {
                     if (this.enemies.size >= HORDE.maxEnemies)
                         break;
                     const angle = (Math.PI * 2 * n) / (def.splitInto ?? 1);
-                    this.spawnAt(EnemyKind.GlitchBug, e.x + Math.cos(angle) * (def.radius + 6), e.y + Math.sin(angle) * (def.radius + 6));
+                    this.spawnAt(EnemyKind.GlitchBug, e.x + Math.cos(angle) * (def.radius + 6), e.y + Math.sin(angle) * (def.radius + 6), e.level);
                 }
             }
         }
@@ -315,14 +331,15 @@ export class HordeEngine {
         return this.roster[this.roster.length - 1] ?? EnemyKind.GlitchBug;
     }
     /** Place one enemy at an exact point, bypassing the safe-distance ring. */
-    spawnAt(kind, x, y) {
+    spawnAt(kind, x, y, level = rollLevel(this.wave)) {
         if (this.enemies.size >= HORDE.maxEnemies)
             return null;
         const def = ENEMY_DEFS[kind];
-        const hp = Math.round(def.hp * this.hpScale);
+        const hp = Math.round(def.hp * this.hpScale * levelHealthScale(level));
         const enemy = {
             id: counterId('e', this.nextId++),
             kind,
+            level,
             x: clamp(x, 20, WORLD.width - 20),
             y: clamp(y, 20, WORLD.height - 20),
             vx: 0,
@@ -358,10 +375,12 @@ export class HordeEngine {
             if (!tooClose)
                 break;
         }
-        const hp = Math.round(def.hp * this.hpScale);
+        const level = rollLevel(this.wave);
+        const hp = Math.round(def.hp * this.hpScale * levelHealthScale(level));
         const enemy = {
             id: counterId('e', this.nextId++),
             kind,
+            level,
             x,
             y,
             vx: 0,

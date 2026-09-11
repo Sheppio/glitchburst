@@ -18,6 +18,10 @@ export interface UpgradeDef {
   cssColour: string;
   /** Fractional change per stack. */
   step: number;
+  /**
+   * Stacks this upgrade will ever grant. `Infinity` means endless — the run
+   * never reaches a "fully optimised" state where power-ups stop mattering.
+   */
   maxStacks: number;
 }
 
@@ -30,7 +34,13 @@ export const UPGRADES: Record<UpgradeId, UpgradeDef> = {
     colour: 0xff2d95,
     cssColour: '#ff2d95',
     step: 0.09,
-    maxStacks: 20,
+    // Endless, and the only one that is. Damage is the upgrade with no ceiling
+    // in the fiction and no downside in the code: it scales one multiplier and
+    // costs nothing per frame. Enemy health now climbs geometrically with
+    // level, so a linearly growing damage stat is what keeps a long run a
+    // contest rather than a formality — and it means the last power-up of a
+    // 40-minute run is still worth walking across the arena for.
+    maxStacks: Infinity,
   },
   speed: {
     id: 'speed',
@@ -40,6 +50,10 @@ export const UPGRADES: Record<UpgradeId, UpgradeDef> = {
     colour: 0x00c8dc,
     cssColour: '#00c8dc',
     step: 0.045,
+    // Capped: movement speed is the one stat that changes what the collision
+    // code has to cope with. Enough of it and a player crosses more than an
+    // enemy radius per frame, which is the tunnelling bug bullets already
+    // needed swept collision to fix.
     maxStacks: 12,
   },
   regen: {
@@ -50,6 +64,8 @@ export const UPGRADES: Record<UpgradeId, UpgradeDef> = {
     colour: 0x3fae00,
     cssColour: '#3fae00',
     step: 0.55,
+    // Capped: regeneration that outpaces incoming damage removes the fail
+    // state, and a horde shooter with no fail state is a screensaver.
     maxStacks: 12,
   },
   firerate: {
@@ -60,6 +76,9 @@ export const UPGRADES: Record<UpgradeId, UpgradeDef> = {
     colour: 0xff9f00,
     cssColour: '#ff9f00',
     step: 0.055,
+    // Capped, by request and by arithmetic: fire rate multiplies live bullets,
+    // and the bullet pool is the one per-frame cost that scales with an
+    // upgrade rather than with the horde.
     maxStacks: 16,
   },
 };

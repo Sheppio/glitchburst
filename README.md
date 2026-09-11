@@ -36,7 +36,7 @@ Developing needs the compiler:
 ```bash
 npm install
 npm run watch      # tsc --watch, rebuilding dist/ on save
-npm test           # 190 tests: simulation, codec, single client, mobile, two clients
+npm test           # 221 tests: simulation, codec, single client, mobile, two clients
 ```
 
 `dist/` is committed on purpose — it is what GitHub Pages serves.
@@ -90,16 +90,22 @@ entire horde**, 20 times a second:
 
 ```
 tds/room/<room>/horde/positions
-e1,918,540,1,1l;e2,1177,1289,0,t;e3,1812,934,1,1l;…
+e1,918,540,d,1l;e2,1177,1289,6,t;e3,1812,934,d,1l;…
  │   │   │  │ └── health (base36)
- │   │   │  └───── kind: 0 bug, 1 drone, 2 tank
+ │   │   │  └───── kind and level, packed (base36)
  │   └───┴──────── position, rounded to whole world pixels
  └──────────────── enemy id
 ```
 
-Measured at the cap: **1,851 bytes** per snapshot versus 4,492 as JSON (59%
-smaller), or ~36 KB/s at 20 Hz. Positions round to whole pixels because peers
-interpolate anyway, so the sub-pixel precision would be discarded on arrival.
+Kind and level share one field: `kind + (level - 1) * 6`. A separate level
+field would have cost two bytes per enemy — 200 at the cap, which pushed the
+snapshot over the 40 KB/s budget the codec exists to respect. Packed, levels 1-6
+cost **nothing at all** and only a full field of level 7 adds anything.
+
+Measured at the cap: **1,851 bytes** per snapshot versus 5,092 as JSON (64%
+smaller), or ~36 KB/s at 20 Hz — 1,951 B in the worst case where all 100 are
+level 7. Positions round to whole pixels because peers interpolate anyway, so
+the sub-pixel precision would be discarded on arrival.
 
 Deaths, drone shots and wave banners batch the same way onto `…/horde/events`.
 
@@ -201,7 +207,7 @@ when they joined.
 
 ## Enemies
 
-| | HP | From wave | Behaviour |
+| | HP (level 1) | From wave | Behaviour |
 | --- | --- | --- | --- |
 | **Skittering Glitch Bug** | 30 | 1 | charges straight in |
 | **Rogue Firewall Drone** | 58 | 3 | hovers at ~300px, strafes, fires |
@@ -216,17 +222,80 @@ one is only Glitch Bugs. A wave of weaving wraiths reads differently to a wave
 of spore nodes; "a bit of each, always" reads as nothing. A kind unlocking on a
 given wave is always in that wave's roster, so no debut is missed.
 
+### Levels
+
+Every enemy carries a **level, 1 to 7**, drawn as a coloured pip at the centre
+of its body — violet at 1 through to red at 7.
+
+This is difficulty made *visible*. Waves used to get harder through a health
+multiplier nobody could see: the same Glitch Bug that died in one shot at wave 2
+took four at wave 20 and looked identical, which reads as your weapon getting
+worse rather than the malware getting tougher. Now you can see what is walking
+at you before you commit to shooting it.
+
+Health is geometric in level — **×1.35 per level**, so level 7 is 5.4× a level 1
+of the same kind. Geometric because the damage upgrade is now endless and
+therefore grows *linearly*: a linear health curve would never catch up and a run
+would have no end. Levels advance every four waves, reaching 7 at wave 25, and
+each spawn has a ~22% chance of rolling one step off its wave's base so a wave
+is a mix rather than a uniform wall.
+
+Rewards scale too, but **sub-linearly** — ×1.5 per level against ×1.35 health.
+Without that the economy would invert exactly as the game speeds up; keeping it
+below the health curve means tough targets pay more per kill but fodder is still
+the better chips-per-second, so both stay worth shooting.
+
+The pip is always drawn on a white disc with a dark rim. It has to be read
+against six different body colours, in peripheral vision, while something else
+is shooting at you — on white it only ever has to contrast with white. Cyan
+stands in for the textbook rainbow's indigo, which is indistinguishable from
+blue at pip size and would cost a whole level of information.
+
+Textures are generated per kind *and* level: 42 of them, drawn once at boot. One
+body sprite plus a tinted pip sprite per enemy would double the display list at
+the 100-enemy cap and add a position to sync every frame, to save texture memory
+we are not short of.
+
 ## Progression
 
-Dead malware drops **compute chips**. Ten convert into a **power-up** that
-materialises beside you; walking into it grants a stacking upgrade — damage
-(+18%), movement speed (+8%) or fire rate (+11%), each capped. Firewall Drones
-(6%) and Trojan Tanks (22%) can also drop one outright, so committing to a tank
-while a wave closes is a decision rather than a chore.
+Dead malware drops **compute chips**. A set converts into a **power-up** that
+materialises beside you; walking into it grants a stacking upgrade. Firewall
+Drones (6%), Trojan Tanks (22%) and Ransom Brutes (30%) can also drop one
+outright, so committing to a tank while a wave closes is a decision rather than
+a chore.
+
+Each power-up costs **one more chip than the last** — 8, 9, 10, 11 … with no
+ceiling. A ceiling would flatten the last third of the curve back into the
+plateau the rising price exists to remove.
+
+| Upgrade | Per stack | Cap | Why |
+| --- | --- | --- | --- |
+| **Payload Boost** (damage) | +9% | **none** | Endless. It scales one multiplier and costs nothing per frame, so there is no reason to stop it — and since enemy health climbs geometrically with level, a linearly growing damage stat is what keeps a long run a contest instead of a formality. |
+| **Pipeline Boost** (fire rate) | +5.5% | 16 | Fire rate multiplies *live bullets* — the one per-frame cost that scales with an upgrade rather than with the horde. |
+| **Clock Boost** (speed) | +4.5% | 12 | Movement speed changes what the collision code has to cope with. Enough of it and a player crosses more than an enemy radius per frame, which is the tunnelling bug bullets already needed swept collision to fix. |
+| **Self Repair** (regen) | +0.55 hp/s | 12 | Regeneration that outpaces incoming damage removes the fail state, and a horde shooter with no fail state is a screensaver. |
+
+Damage being endless is the answer to "I reach fully optimised too soon": there
+is no such state to reach. Once the three capped lines are full every power-up
+is damage, forever, at a price that keeps climbing.
 
 Rolls are weighted toward whatever you have least of, so a long run broadens a
 build instead of dumping a twelfth damage stack on someone who has never seen a
 speed boost.
+
+### The shape of a run
+
+Modelled against a perfect solo Overclocker — every chip collected, every shot
+landed — the time to clear a wave against the time the wave is given:
+
+| Wave | 1-8 | 9-12 | 13 | 14-30 |
+| --- | --- | --- | --- | --- |
+| Ratio | 0.17 → 0.61 | 0.81 → 0.98 | **1.17** | 0.76 - 1.04, sawtooth |
+
+Comfortable, then holding the line, then behind for the first time at wave 13 —
+by which point power-ups have started landing. After that every level-up spikes
+the ratio and the accumulating damage stacks grind it back down. It never
+inverts, so the run stays a contest indefinitely rather than being won.
 
 **Chips never touch the wire.** Every client spawns them independently from
 death events it already receives, and each player collects their own. The
@@ -430,23 +499,24 @@ for a game — just don't build anything that needs privacy on top of it.
 npm test
 ```
 
-190 checks across four suites. The browser suites vendor Phaser locally and
+221 checks across four suites. The browser suites vendor Phaser locally and
 swap MQTT for a loopback stub that relays over `BroadcastChannel`, so two tabs
 share one "broker" and a real multi-client room can be tested offline.
 
-- **`sim.test.mjs`** (108) — codec round-trips, truncation tolerance, payload
+- **`sim.test.mjs`** (136) — codec round-trips, truncation tolerance, payload
   size at the cap, enemy cap, difficulty scaling, wave pacing, damage
   attribution, steering, decoy priority, host adoption, shockwave, progression
   and upgrade caps, deterministic drop rolls, turn-rate limiting, the auto-aim
-  scoring formula, and the audio volume curve.
-- **`smoke.test.mjs`** (37) — menus, settings persistence and migration, Phaser
+  scoring formula, enemy levels and their health/reward curves, and the audio
+  volume curve.
+- **`smoke.test.mjs`** (38) — menus, settings persistence and migration, Phaser
   boot, election, 20 Hz batching, attacker-authority kills, point-blank hits,
   chip pickup and conversion, turn rate, abilities, pause, settings over a live
   match, and broadcast rate under a starved renderer.
 - **`mobile.test.mjs`** (14) — an emulated Pixel with a touchscreen and no
   mouse: taps through the whole flow, and hit-tests that nothing invisible is
   covering the buttons.
-- **`multiplayer.test.mjs`** (31) — two clients: election, peer unpacking,
+- **`multiplayer.test.mjs`** (33) — two clients: election, peer unpacking,
   mid-game join, interpolation, squad scaling, seeing each other's fire, pause
   propagation, and **host failover** with the horde carried through.
 

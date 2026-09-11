@@ -7,12 +7,18 @@
  * The delimited form below is ~1.4 KB per frame (~28 KB/s) and parses with a
  * couple of `split` calls.
  *
- * Format (requirement 3):   id,x,y,kind,hp;id,x,y,kind,hp;...
+ * Format (requirement 3):   id,x,y,kl,hp;id,x,y,kl,hp;...
  *
  * Ids and health are base36; positions are rounded to whole world pixels, which
  * is well under the size of every sprite and therefore invisible once the peer
  * interpolates (see `render/lerp.ts`).
+ *
+ * `kl` is kind and level packed into one base36 field rather than two. A
+ * separate level field would have cost two bytes per enemy — 200 at the cap,
+ * which pushed the snapshot over the 40 KB/s budget the whole codec exists to
+ * respect. Packed, only level 7 needs a second character.
  */
+import { clampLevel, MAX_LEVEL } from '../sim/enemyLevels.js';
 const REC = ';';
 const FLD = ',';
 const EVT = '|';
@@ -27,11 +33,15 @@ const num = (s) => {
     return Number.isFinite(v) ? v : 0;
 };
 /* ------------------------------------------------------------------ horde */
+/** Number of enemy kinds the pack/unpack pair is sized for. */
+const KINDS = 6;
+/** kind (0-5) and level (1-7) as one number, 0-41. */
+const packKindLevel = (kind, level) => (kind >= 0 && kind < KINDS ? kind : 0) + (clampLevel(level) - 1) * KINDS;
 /** Host -> room. The entire horde as one message. */
 export function encodeHorde(enemies) {
     let out = '';
     for (const e of enemies) {
-        out += e.id + FLD + i(e.x) + FLD + i(e.y) + FLD + e.kind + FLD + b36(e.hp) + REC;
+        out += e.id + FLD + i(e.x) + FLD + i(e.y) + FLD + b36(packKindLevel(e.kind, e.level)) + FLD + b36(e.hp) + REC;
     }
     return out;
 }
@@ -47,14 +57,17 @@ export function decodeHorde(payload) {
         if (f.length < 5)
             continue;
         // Clamp to the known range rather than naming each kind: an unrecognised
-        // value is a peer on a newer build, and rendering it as a Glitch Bug is a
-        // better failure than dropping it and shooting at nothing.
-        const kind = num(f[3]);
+        // value is a peer on a newer build, and rendering it as a level 1 Glitch
+        // Bug is a better failure than dropping it and shooting at nothing.
+        const packed = un36(f[3]);
+        const kind = packed % KINDS;
+        const level = Math.floor(packed / KINDS) + 1;
         out.push({
             id: f[0],
             x: num(f[1]),
             y: num(f[2]),
-            kind: (kind >= 0 && kind <= 5 ? kind : 0),
+            kind: (kind >= 0 && kind < KINDS ? kind : 0),
+            level: level >= 1 && level <= MAX_LEVEL ? level : 1,
             hp: un36(f[4]),
         });
     }
@@ -66,7 +79,7 @@ export function encodeEvents(events) {
     for (const e of events) {
         switch (e.t) {
             case 'death':
-                parts.push(`D:${e.id},${i(e.x)},${i(e.y)},${e.kind}`);
+                parts.push(`D:${e.id},${i(e.x)},${i(e.y)},${e.kind},${clampLevel(e.level)}`);
                 break;
             case 'shot':
                 parts.push(`P:${e.id},${i(e.x)},${i(e.y)},${i(e.vx)},${i(e.vy)},${i(e.damage)}`);
@@ -89,7 +102,16 @@ export function decodeEvents(payload) {
         const tag = raw.slice(0, colon);
         const f = raw.slice(colon + 1).split(FLD);
         if (tag === 'D' && f.length >= 4) {
-            out.push({ t: 'death', id: f[0], x: num(f[1]), y: num(f[2]), kind: num(f[3]) });
+            // The level field is read leniently: deaths are the one place a dropped
+            // field costs only a slightly wrong chip count, not a desynced horde.
+            out.push({
+                t: 'death',
+                id: f[0],
+                x: num(f[1]),
+                y: num(f[2]),
+                kind: num(f[3]),
+                level: f.length >= 5 ? clampLevel(num(f[4])) : 1,
+            });
         }
         else if (tag === 'P' && f.length >= 6) {
             out.push({

@@ -5,6 +5,7 @@ import { decodeEvents, decodeField, decodeHorde, decodePause, decodeShots, decod
 import { Topics, segment } from '../net/topics.js';
 import { CLASSES, classDps } from '../sim/classes.js';
 import { ENEMY_DEFS } from '../sim/enemyTypes.js';
+import { clampLevel } from '../sim/enemyLevels.js';
 import { HordeEngine } from '../sim/HordeEngine.js';
 import { UPGRADES, UPGRADE_ORDER } from '../sim/progression.js';
 import { pickTarget } from '../sim/targeting.js';
@@ -650,7 +651,8 @@ export class GameScene extends Phaser.Scene {
         // the host's own enemies stay smooth between 20Hz steps.
         this.snapshotTick++;
         for (const enemy of horde.enemies.values()) {
-            const view = this.enemies.get(enemy.id) ?? this.spawnEnemyView(enemy.id, enemy.kind, enemy.x, enemy.y);
+            const view = this.enemies.get(enemy.id) ??
+                this.spawnEnemyView(enemy.id, enemy.kind, enemy.level, enemy.x, enemy.y);
             view.tx = enemy.x;
             view.ty = enemy.y;
             view.hp = enemy.hp;
@@ -660,7 +662,7 @@ export class GameScene extends Phaser.Scene {
         this.pruneUnseen();
         for (const event of result.events) {
             if (event.t === 'death') {
-                this.killEnemyView(event.id, event.x, event.y, event.kind);
+                this.killEnemyView(event.id, event.x, event.y, event.kind, event.level);
             }
             else if (event.t === 'shot') {
                 this.spawnEnemyBullet(event.x, event.y, event.vx, event.vy, event.damage);
@@ -842,7 +844,7 @@ export class GameScene extends Phaser.Scene {
         for (const snap of decodeHorde(payload)) {
             let view = this.enemies.get(snap.id);
             if (!view)
-                view = this.spawnEnemyView(snap.id, snap.kind, snap.x, snap.y);
+                view = this.spawnEnemyView(snap.id, snap.kind, snap.level, snap.x, snap.y);
             view.tx = snap.x;
             view.ty = snap.y;
             view.hp = snap.hp;
@@ -864,7 +866,7 @@ export class GameScene extends Phaser.Scene {
                 case 'death':
                     // Peers play the burst; the host already did when it resolved the kill.
                     if (!this.horde)
-                        this.killEnemyView(event.id, event.x, event.y, event.kind);
+                        this.killEnemyView(event.id, event.x, event.y, event.kind, event.level);
                     break;
                 case 'shot':
                     if (!this.horde)
@@ -982,9 +984,10 @@ export class GameScene extends Phaser.Scene {
         }
     }
     /* ----------------------------------------------------- entity bookkeeping */
-    spawnEnemyView(id, kind, x, y) {
+    spawnEnemyView(id, kind, level, x, y) {
         const def = ENEMY_DEFS[kind] ?? ENEMY_DEFS[EnemyKind.GlitchBug];
-        const sprite = this.add.image(x, y, TEX.enemy(def.kind)).setDepth(20);
+        const lvl = clampLevel(level);
+        const sprite = this.add.image(x, y, TEX.enemy(def.kind, lvl)).setDepth(20);
         // Materialise, rather than appear. Skipped for the first couple of seconds
         // so a client joining mid-wave does not play sixty of these at once — that
         // burst is a state sync, not sixty things arriving.
@@ -993,11 +996,14 @@ export class GameScene extends Phaser.Scene {
             this.tweens.add({ targets: sprite, scale: 1, alpha: 1, duration: 260, ease: 'Back.easeOut' });
             this.fx.spawnFlash(x, y, def.colour, def.radius);
         }
-        const view = { id, kind: def.kind, hp: def.hp, maxHp: def.hp, sprite, tx: x, ty: y, seen: this.snapshotTick };
+        const view = {
+            id, kind: def.kind, level: lvl, hp: def.hp, maxHp: def.hp,
+            sprite, tx: x, ty: y, seen: this.snapshotTick,
+        };
         this.enemies.set(id, view);
         return view;
     }
-    killEnemyView(id, x, y, kind) {
+    killEnemyView(id, x, y, kind, level) {
         const view = this.enemies.get(id);
         const def = ENEMY_DEFS[kind] ?? ENEMY_DEFS[EnemyKind.GlitchBug];
         if (view) {
@@ -1006,7 +1012,7 @@ export class GameScene extends Phaser.Scene {
         }
         this.fx.enemyBurst(x, y, def.colour, kind === EnemyKind.TrojanTank ? 2 : 1);
         this.cfg.sfx.kill(kind === EnemyKind.TrojanTank);
-        this.progression.dropFrom(x, y, def, id);
+        this.progression.dropFrom(x, y, def, id, clampLevel(level));
     }
     /**
      * Rebuild another player's shot locally.

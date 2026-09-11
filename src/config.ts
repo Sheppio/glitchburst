@@ -105,8 +105,14 @@ export const DIFFICULTY = {
   sizePerPlayer: 0.45,
   /** Extra enemy health per additional player: 1.0x solo → 1.36x at four. */
   healthPerPlayer: 0.12,
-  /** Waves also grow harder over time, independent of headcount. */
-  healthPerWave: 0.09,
+  /**
+   * Waves also grow harder over time, independent of headcount.
+   *
+   * Small, because enemy *levels* now carry most of that growth (see
+   * `sim/enemyLevels.ts`) and they do it visibly. This is the residual creep
+   * between level-ups, so the four waves inside one level are not identical.
+   */
+  healthPerWave: 0.04,
   /** Solo play gets a small handicap so one player can hold a lane. */
   soloHealthDiscount: 0.9,
 } as const;

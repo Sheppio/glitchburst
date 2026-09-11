@@ -3,6 +3,7 @@ import { WORLD } from '../config.js';
 import { PROGRESSION, PlayerProgress, UPGRADES } from '../sim/progression.js';
 import type { UpgradeId } from '../sim/progression.js';
 import type { EnemyDef } from '../sim/enemyTypes.js';
+import { levelRewardScale } from '../sim/enemyLevels.js';
 import { clamp, dist2, hashUnit } from '../util.js';
 import type { Sfx } from '../audio/Sfx.js';
 import type { Fx } from './fx.js';
@@ -97,9 +98,17 @@ export class ProgressionSystem {
     }));
   }
 
-  /** Everything a dead enemy leaves behind. */
-  dropFrom(x: number, y: number, def: EnemyDef, enemyId: string): void {
-    this.spawnChips(x, y, def.chipDrop, enemyId);
+  /**
+   * Everything a dead enemy leaves behind.
+   *
+   * The drop scales with the enemy's level, because its health does: a level 7
+   * brute with eleven times the health paying the same six chips as a level 1
+   * would make the economy slow down exactly as the game speeds up. The level
+   * comes off the wire with the death event rather than from the local view,
+   * so a client that never saw the enemy alive still pays out correctly.
+   */
+  dropFrom(x: number, y: number, def: EnemyDef, enemyId: string, level = 1): void {
+    this.spawnChips(x, y, Math.round(def.chipDrop * levelRewardScale(level)), enemyId);
     this.maybeDropPowerUp(x, y, def.powerUpChance, enemyId);
   }
 

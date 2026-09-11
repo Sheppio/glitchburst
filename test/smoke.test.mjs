@@ -246,6 +246,42 @@ await page.evaluate(() => {
   window.__keepAlive = setInterval(() => { scene.me.hp = scene.me.maxHp; }, 100);
 });
 
+await step('every enemy kind has a texture at every level', async () => {
+  // A missing texture key is a silent failure in Phaser — it renders a green
+  // placeholder box rather than throwing — so this is checked explicitly.
+  const out = await page.evaluate(() => {
+    const scene = window.glitchburst.game.scene.getScene('game');
+    const missing = [];
+    for (let kind = 0; kind < 6; kind++) {
+      for (let level = 1; level <= 7; level++) {
+        const key = `tex-enemy-${kind}-${level}`;
+        if (!scene.textures.exists(key)) missing.push(key);
+      }
+    }
+    // The pip has to actually differ between levels, or 42 textures is 42
+    // copies of the same picture.
+    const pixel = (key) => {
+      const src = scene.textures.get(key).getSourceImage();
+      const canvas = document.createElement('canvas');
+      canvas.width = src.width;
+      canvas.height = src.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(src, 0, 0);
+      const d = ctx.getImageData(Math.floor(src.width / 2), Math.floor(src.height / 2), 1, 1).data;
+      return `${d[0]},${d[1]},${d[2]}`;
+    };
+    const centres = Array.from({ length: 7 }, (_, i) => pixel(`tex-enemy-0-${i + 1}`));
+    return { missing, centres, distinct: new Set(centres).size };
+  });
+
+  return {
+    ok: out.missing.length === 0 && out.distinct === 7,
+    note: out.missing.length
+      ? `missing ${out.missing.slice(0, 3).join(', ')}`
+      : `42 textures, ${out.distinct} distinct pip colours: ${out.centres.join(' ')}`,
+  };
+});
+
 await step('client wins election and becomes host', async () => {
   await page.waitForFunction(() => window.glitchburst?.room?.isHost === true, null, { timeout: 6000 });
   const host = await page.textContent('#hud-host');

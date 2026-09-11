@@ -37,6 +37,8 @@ export interface AiTarget extends Vec2 {
 export interface Enemy extends Vec2 {
   id: EnemyId;
   kind: EnemyKind;
+  /** 1-7. Scales health and reward; drawn as a coloured pip. See `enemyLevels.ts`. */
+  level: number;
   hp: number;
   maxHp: number;
   vx: number;
@@ -55,6 +57,7 @@ export interface EnemySnapshot {
   x: number;
   y: number;
   kind: EnemyKind;
+  level: number;
   hp: number;
 }
 

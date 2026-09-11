@@ -12,6 +12,10 @@ import { HORDE, PLAYER, TURN_RATE_RAD_PER_SEC } from '../dist/config.js';
 import { PlayerProgress, PROGRESSION, UPGRADES, UPGRADE_ORDER } from '../dist/sim/progression.js';
 import { approachAngle, hashUnit } from '../dist/util.js';
 import { ALL_KINDS, ENEMY_DEFS } from '../dist/sim/enemyTypes.js';
+import {
+  baseLevelForWave, clampLevel, LEVEL_COLOURS, LEVELS, levelHealthScale,
+  levelRewardScale, MAX_LEVEL, rollLevel,
+} from '../dist/sim/enemyLevels.js';
 import { pickTarget, targetScore, TARGETING } from '../dist/sim/targeting.js';
 import { CLASSES, CLASS_ORDER, classDps, weaponRange } from '../dist/sim/classes.js';
 import { Pool } from '../dist/render/pool.js';
@@ -224,13 +228,25 @@ const run = (engine, seconds, t = targets(1)) => {
 }
 
 {
+  // Exactly one upgrade is endless. That is the whole answer to "I reach fully
+  // optimised too soon": there is no such state to reach any more.
+  const endless = UPGRADE_ORDER.filter((id) => !Number.isFinite(UPGRADES[id].maxStacks));
+  check('damage is the endless upgrade', endless.length === 1 && endless[0] === 'damage',
+    endless.length ? `endless: ${endless.join(', ')}` : 'every upgrade is capped');
+
   const p = new PlayerProgress();
   // Drive from the table, not a hand-written list, or adding an upgrade
   // silently stops this testing what it claims to.
   for (const id of UPGRADE_ORDER) {
-    for (let i = 0; i < UPGRADES[id].maxStacks; i++) p.grant(id);
+    const cap = UPGRADES[id].maxStacks;
+    for (let i = 0; i < (Number.isFinite(cap) ? cap : 400); i++) p.grant(id);
   }
-  check('a fully upgraded player rolls nothing', p.rollUpgrade() === null);
+  check('every capped upgrade still stops', UPGRADE_ORDER.every((id) =>
+    Number.isFinite(UPGRADES[id].maxStacks) ? p.grant(id) === false : p.grant(id) === true));
+  check('a maxed-out player still has something to roll', p.rollUpgrade() === 'damage',
+    'only damage remains, forever');
+  check('damage keeps stacking well past every other cap', p.stacks.damage > 400,
+    `${p.stacks.damage} damage stacks and counting`);
 }
 
 {
@@ -268,11 +284,13 @@ const run = (engine, seconds, t = targets(1)) => {
     steps.every((d) => d === 1) && costs[0] === PROGRESSION.chipsPerPowerUp,
     costs.slice(0, 6).join(', ') + ' ...');
 
-  const swing =
-    (1 + UPGRADES.damage.step * UPGRADES.damage.maxStacks) *
-    (1 + UPGRADES.firerate.step * UPGRADES.firerate.maxStacks);
-  check('a fully upgraded player is strong but not absurd', swing > 3 && swing < 6,
-    `x${swing.toFixed(1)} dps between a fresh and a maxed run`);
+  // Damage no longer has a ceiling, so "maxed" is measured at the point the
+  // capped upgrades run out — which is where the run stops gaining anything
+  // except damage, and therefore where the endless half has to take over.
+  const atCaps =
+    (1 + UPGRADES.damage.step * 20) * (1 + UPGRADES.firerate.step * UPGRADES.firerate.maxStacks);
+  check('a well-invested player is strong but not absurd', atCaps > 3 && atCaps < 6,
+    `x${atCaps.toFixed(1)} dps at 20 damage stacks and maxed fire rate`);
 }
 
 {
@@ -326,6 +344,103 @@ const run = (engine, seconds, t = targets(1)) => {
     .map((l) => fadeOut(l, 0.3))
     .every((v, i, a) => i === 0 || v <= a[i - 1]));
   check('a zero lifetime cannot divide by zero', fadeOut(1, 0) === 1);
+}
+
+/* --------------------------------------------------------- enemy levels */
+
+{
+  check('there is one colour per level', LEVEL_COLOURS.length === MAX_LEVEL);
+  check('every level colour is distinct', new Set(LEVEL_COLOURS).size === MAX_LEVEL);
+
+  check('level 1 is the baseline', levelHealthScale(1) === 1);
+  check('health climbs with level',
+    Array.from({ length: MAX_LEVEL }, (_, i) => levelHealthScale(i + 1))
+      .every((v, i, a) => i === 0 || v > a[i - 1]));
+  check('the top level is a real wall but not a brick one',
+    levelHealthScale(MAX_LEVEL) > 4 && levelHealthScale(MAX_LEVEL) < 8,
+    `x${levelHealthScale(MAX_LEVEL).toFixed(1)} health at level ${MAX_LEVEL}`);
+
+  // Rewards have to climb with health or the economy inverts exactly as the
+  // game speeds up — but sub-linearly, so fodder stays worth shooting.
+  check('reward climbs with level', levelRewardScale(MAX_LEVEL) > levelRewardScale(1));
+  check('reward climbs slower than health',
+    levelRewardScale(MAX_LEVEL) < levelHealthScale(MAX_LEVEL),
+    `x${levelRewardScale(MAX_LEVEL).toFixed(1)} reward against x${levelHealthScale(MAX_LEVEL).toFixed(1)} health`);
+
+  check('wave 1 spawns level 1', baseLevelForWave(1) === 1);
+  check('levels advance with waves', baseLevelForWave(1 + LEVELS.wavesPerLevel) === 2);
+  check('levels stop at the top', baseLevelForWave(500) === MAX_LEVEL);
+  check('the top level arrives late enough to be an arc',
+    baseLevelForWave(20) < MAX_LEVEL && baseLevelForWave(30) === MAX_LEVEL,
+    `level ${MAX_LEVEL} from wave ${(MAX_LEVEL - 1) * LEVELS.wavesPerLevel + 1}`);
+
+  // Out-of-range input must never reach a health multiplier or a colour index.
+  check('levels are clamped, never trusted',
+    clampLevel(0) === 1 && clampLevel(99) === MAX_LEVEL && clampLevel(Number.NaN) === 1 &&
+    clampLevel(-3) === 1);
+
+  // Deterministic rolls: the spread is a design knob, not something a test
+  // should be at the mercy of.
+  check('a roll with no spread is the wave base', rollLevel(9, () => 1) === baseLevelForWave(9));
+  check('the low half of the spread rolls down', rollLevel(9, () => 0) === baseLevelForWave(9) - 1);
+  check('the high half of the spread rolls up',
+    rollLevel(9, () => LEVELS.spreadChance * 0.9) === baseLevelForWave(9) + 1);
+  check('a spread below level 1 still clamps', rollLevel(1, () => 0) === 1);
+
+  const spread = Array.from({ length: 4000 }, () => rollLevel(9));
+  const offBase = spread.filter((l) => l !== baseLevelForWave(9)).length / spread.length;
+  check('most of a wave is the expected threat', offBase > 0.1 && offBase < 0.35,
+    `${(offBase * 100).toFixed(0)}% of spawns are off the wave's base level`);
+  check('no roll ever leaves the legal range', spread.every((l) => l >= 1 && l <= MAX_LEVEL));
+}
+
+{
+  // Levels have to survive the wire, or a peer draws the wrong pip and a
+  // promoted host adopts a horde at the wrong difficulty.
+  const levelled = Array.from({ length: 100 }, (_, i) => ({
+    id: `e${i.toString(36)}`, kind: i % 6, level: (i % MAX_LEVEL) + 1,
+    x: 1200 + i, y: 900 + i, hp: 50 + i, maxHp: 100, vx: 0, vy: 0, speed: 100,
+    cooldown: 0, stun: 0, targetId: null,
+  }));
+  const back = decodeHorde(encodeHorde(levelled));
+  check('kind and level both survive the packed field',
+    back.every((e, i) => e.kind === levelled[i].kind && e.level === levelled[i].level));
+
+  // Packing them into one field is what keeps this inside the bandwidth budget
+  // a separate level field would have blown.
+  const wire = encodeHorde(levelled);
+  check('levels cost the snapshot almost nothing', wire.length < 2048,
+    `${wire.length}B at the cap, ${((wire.length * 20) / 1024).toFixed(1)} KB/s at 20Hz`);
+
+  const top = decodeHorde(encodeHorde(levelled.map((e) => ({ ...e, level: MAX_LEVEL }))));
+  check('a full field of top-level enemies still fits', top.every((e) => e.level === MAX_LEVEL));
+
+  const deaths = decodeEvents(encodeEvents([{ t: 'death', id: 'e9', x: 10, y: 20, kind: 2, level: 5 }]));
+  check('a death event carries the level that pays the chips',
+    deaths[0].level === 5 && deaths[0].kind === 2);
+}
+
+{
+  // The engine has to put levels on spawns and scale health by them, or the
+  // pip is decoration.
+  const engine = new HordeEngine();
+  run(engine, 14);
+  const live = [...engine.enemies.values()];
+  check('every spawned enemy carries a legal level',
+    live.length > 0 && live.every((e) => e.level >= 1 && e.level <= MAX_LEVEL),
+    `${live.length} live, levels ${[...new Set(live.map((e) => e.level))].sort().join('/')}`);
+  check('health tracks the level it was spawned at',
+    live.every((e) => {
+      const base = ENEMY_DEFS[e.kind].hp;
+      return e.maxHp >= Math.floor(base * levelHealthScale(e.level) * 0.5);
+    }));
+
+  const late = new HordeEngine();
+  run(late, 120);
+  const lateLevels = [...late.enemies.values()].map((e) => e.level);
+  check('a long run is fighting higher levels than a short one',
+    lateLevels.length > 0 && Math.max(...lateLevels) > Math.max(...live.map((e) => e.level)),
+    `wave ${late.waveNumber}: levels up to ${Math.max(...lateLevels)}`);
 }
 
 /* ---------------------------------------------------------- audio volume */
