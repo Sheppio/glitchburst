@@ -1,6 +1,6 @@
 # GLITCHBURST
 
-<!-- version -->**v0.2.27**<!-- /version --> — the build currently on Pages.
+<!-- version -->**v0.2.28**<!-- /version --> — the build currently on Pages.
 
 A co-op top-down horde shooter that runs entirely in the browser. **No game server.**
 Every client talks to a public MQTT broker over WebSockets, and one of them
@@ -38,7 +38,7 @@ Developing needs the compiler:
 ```bash
 npm install
 npm run watch      # tsc --watch, rebuilding dist/ on save
-npm test           # 383 tests: simulation, codec, single client, mobile, controller, two clients
+npm test           # 384 tests: simulation, codec, single client, mobile, controller, two clients
 ```
 
 `dist/` is committed on purpose — it is what GitHub Pages serves.
@@ -283,6 +283,21 @@ anything pinned to the camera is un-scaled by hand, because Phaser's zoom
 multiplies everything it draws, `scrollFactor(0)` included, so the vignette and
 the edge markers would otherwise grow and shrink with the arena instead of
 staying put as screen furniture.
+
+The **mouse wheel** drives the same setting, one 0.05 step per detent, so the
+slider follows the wheel and the choice survives a reload — there is one place
+the zoom lives. It is registered on Phaser's input rather than on the window,
+which is the gating as much as the plumbing: Phaser listens on the canvas and
+the HUD sits above it in the DOM, so a wheel over the settings list scrolls that
+list and never reaches the camera.
+
+Wheel deltas are normalised against the notch rather than against some absolute
+idea of a line. One detent is **100 pixels in Chrome and three lines in
+Firefox**, so a line is a third of a notch — converting it at a
+plausible-looking 16px instead made a Firefox detent worth half a step, and the
+zoom barely moved. A trackpad, which sends a stream of small deltas rather than
+detents, accumulates into whole notches instead of crossing the range in a
+flick.
 
 ### Off-screen markers
 
@@ -986,7 +1001,7 @@ for a game — just don't build anything that needs privacy on top of it.
 npm test
 ```
 
-383 checks across five suites. The browser suites vendor Phaser locally and
+384 checks across five suites. The browser suites vendor Phaser locally and
 swap MQTT for a loopback stub that relays over `BroadcastChannel`, so two tabs
 share one "broker" and a real multi-client room can be tested offline.
 
@@ -997,7 +1012,7 @@ share one "broker" and a real multi-client room can be tested offline.
   scoring formula, enemy levels and their health/reward curves, wave streaming
   and the tempo floor, the autopilot's steering bands and its survival against a
   live horde, and the audio volume curve.
-- **`smoke.test.mjs`** (51) — menus, settings persistence and migration, Phaser
+- **`smoke.test.mjs`** (52) — menus, settings persistence and migration, Phaser
   boot, election, 20 Hz batching, attacker-authority kills, point-blank hits,
   chip pickup and conversion, turn rate, abilities, pause, settings over a live
   match, and broadcast rate under a starved renderer.

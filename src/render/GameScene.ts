@@ -227,6 +227,8 @@ export class GameScene extends Phaser.Scene {
    */
   private autoHeading = { x: 0, y: 0 };
   private autoHeadingAt = 0;
+  /** Wheel distance not yet spent on a zoom step. See `wheelZoom`. */
+  private wheelTravel = 0;
 
   private get tint(): number {
     return colourOf(this.colourId).colour;
@@ -463,6 +465,17 @@ export class GameScene extends Phaser.Scene {
     // numbers actually change.
     this.scale.on(Phaser.Scale.Events.RESIZE, this.applyZoom);
     this.unsubs.push(this.cfg.settings.events.on('change', this.applyZoom));
+
+    // Wheel zoom, registered on Phaser's input rather than on the window. That
+    // is the gating as well as the plumbing: Phaser listens on the canvas, and
+    // the HUD sits above it in the DOM, so a wheel over the settings list or
+    // the pause card scrolls that list and never reaches here.
+    this.input.on('wheel', (pointer: Phaser.Input.Pointer, _over: unknown, _dx: number, dy: number) => {
+      // Phaser hands over the deltas but not the event, and the event is where
+      // `deltaMode` lives — without it a Firefox notch reads as 3 pixels.
+      const native = pointer.event;
+      this.wheelZoom(dy, native instanceof WheelEvent ? native : undefined);
+    });
 
     // The UI raises this whenever a strip actually changes size, including once
     // on first layout — which matters, because at scene creation the HUD has
@@ -1814,6 +1827,45 @@ export class GameScene extends Phaser.Scene {
    * vignette and the edge markers would shrink and grow with the arena instead
    * of staying put as screen furniture.
    */
+  /**
+   * Wheel input, accumulated into whole zoom steps.
+   *
+   * Scrolling up zooms in, which is the direction every map in the world uses.
+   * Written through the settings store rather than straight to the camera, so
+   * the slider in settings shows the change, it survives a reload, and there is
+   * exactly one place the zoom lives.
+   */
+  private wheelZoom(deltaY: number, event?: WheelEvent): void {
+    if (!Number.isFinite(deltaY) || deltaY === 0) return;
+
+    // Normalised to pixels first, against `wheelNotch` rather than against some
+    // absolute idea of a line. One detent of a wheel is 100 pixels in Chrome
+    // and *three lines* in Firefox, so a line is a third of a notch and a page
+    // is one — converting a line at a plausible-looking 16px instead made a
+    // Firefox detent worth half a step, and the zoom barely moved.
+    const mode = event?.deltaMode ?? 0;
+    const pixels =
+      mode === 1 ? (deltaY * ZOOM.wheelNotch) / 3
+      : mode === 2 ? deltaY * ZOOM.wheelNotch
+      : deltaY;
+    this.wheelTravel += pixels;
+
+    while (Math.abs(this.wheelTravel) >= ZOOM.wheelNotch) {
+      const direction = Math.sign(this.wheelTravel);
+      this.wheelTravel -= direction * ZOOM.wheelNotch;
+      this.stepZoom(-direction);
+    }
+  }
+
+  private stepZoom(direction: number): void {
+    const current = clamp(this.cfg.settings.current.zoom, ZOOM.min, ZOOM.max);
+    const next = clamp(current + direction * ZOOM.step, ZOOM.min, ZOOM.max);
+    // Snapped to the step, and rounded off the binary-float noise that
+    // repeatedly adding 0.05 otherwise leaves behind.
+    const snapped = Number((Math.round(next / ZOOM.step) * ZOOM.step).toFixed(2));
+    this.cfg.settings.set('zoom', snapped);
+  }
+
   private applyZoom = (): void => {
     const cam = this.cameras.main;
     const zoom = clamp(this.cfg.settings.current.zoom, ZOOM.min, ZOOM.max);

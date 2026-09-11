@@ -154,7 +154,27 @@ export const DIFFICULTY = {
     soloHealthDiscount: 0.9,
 };
 /** Camera zoom limits. Mirrored by the settings slider's own range. */
-export const ZOOM = { min: 0.6, max: 1.4 };
+export const ZOOM = {
+    min: 0.6,
+    max: 1.4,
+    /**
+     * One notch of the wheel, and the granularity the value is snapped to.
+     *
+     * Matched to the settings slider's own step, so the two controls land on the
+     * same values — a wheel that left the zoom on 0.8734 would be a number the
+     * slider could never return to, and the readout would disagree with itself.
+     */
+    step: 0.05,
+    /**
+     * Scroll distance, in pixels, that counts as one notch.
+     *
+     * 100 is what a mouse wheel click reports in Chrome, so a mouse gets one step
+     * per click. A trackpad sends many small deltas instead, which accumulate —
+     * treating each of those as a notch would cross the whole zoom range in a
+     * flick.
+     */
+    wheelNotch: 100,
+};
 export const LIVES = {
     /**
      * Reboots available to a solo player. The fourth death ends the run.

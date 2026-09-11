@@ -1217,6 +1217,79 @@ await step('a reboot never puts you back inside the swarm', async () => {
   };
 });
 
+await step('the wheel zooms, and lands on the same values the slider does', async () => {
+  const out = await page.evaluate(async () => {
+    const scene = window.glitchburst.game.scene.getScene('game');
+    const { settings } = window.glitchburst;
+    const frame = () => new Promise((r) => requestAnimationFrame(r));
+
+    settings.set('zoom', 1);
+    await frame();
+    const start = { setting: settings.current.zoom, camera: scene.cameras.main.zoom };
+
+    // One notch of a mouse wheel in Chrome is 100px, and up means in.
+    scene.wheelZoom(-100, { deltaMode: 0 });
+    await frame();
+    const inOnce = { setting: settings.current.zoom, camera: scene.cameras.main.zoom };
+
+    scene.wheelZoom(100, { deltaMode: 0 });
+    scene.wheelZoom(100, { deltaMode: 0 });
+    await frame();
+    const outOnce = { setting: settings.current.zoom, camera: scene.cameras.main.zoom };
+
+    // A trackpad sends many small deltas. They accumulate into whole notches
+    // rather than each one crossing the range in a flick.
+    const beforeDrift = settings.current.zoom;
+    for (let i = 0; i < 9; i++) scene.wheelZoom(-10, { deltaMode: 0 });
+    const partial = settings.current.zoom;
+    scene.wheelZoom(-10, { deltaMode: 0 });
+    const complete = settings.current.zoom;
+
+    // Firefox reports lines, not pixels. Three lines is one notch there.
+    settings.set('zoom', 1);
+    scene.wheelZoom(-3, { deltaMode: 1 });
+    const lines = settings.current.zoom;
+
+    // Cannot be driven past the ends, and never onto a value the slider's own
+    // 0.05 step could not produce.
+    for (let i = 0; i < 40; i++) scene.wheelZoom(-100, { deltaMode: 0 });
+    const ceiling = settings.current.zoom;
+    for (let i = 0; i < 60; i++) scene.wheelZoom(100, { deltaMode: 0 });
+    const floor = settings.current.zoom;
+
+    const slider = document.getElementById('range-zoom');
+    settings.set('zoom', 0.85);
+    await frame();
+    const sliderValue = slider ? Number(slider.value) : null;
+
+    settings.set('zoom', 1);
+    await frame();
+    return {
+      start, inOnce, outOnce, beforeDrift, partial, complete, lines,
+      ceiling, floor, sliderValue,
+      step: 0.05,
+    };
+  });
+
+  const onStep = (v) => Math.abs(v / out.step - Math.round(v / out.step)) < 1e-9;
+  const ok =
+    out.start.setting === 1 &&
+    out.inOnce.setting === 1.05 && out.inOnce.camera === 1.05 &&
+    out.outOnce.setting === 0.95 && out.outOnce.camera === 0.95 &&
+    out.partial === out.beforeDrift && out.complete === out.beforeDrift + out.step &&
+    out.lines === 1.05 &&
+    out.ceiling === 1.4 && out.floor === 0.6 &&
+    onStep(out.ceiling) && onStep(out.floor) &&
+    out.sliderValue === 0.85;
+
+  return {
+    ok,
+    note: `1 → ${out.inOnce.setting} in → ${out.outOnce.setting} out, camera follows; ` +
+      `90px of trackpad drift held at ${out.partial}, the next 10 stepped to ${out.complete}; ` +
+      `firefox lines ${out.lines}; clamped ${out.floor}–${out.ceiling}; slider reads ${out.sliderValue}`,
+  };
+});
+
 await step('a hit frames the screen instead of filling it', async () => {
   const out = await page.evaluate(async () => {
     const scene = window.glitchburst.game.scene.getScene('game');
