@@ -6,7 +6,7 @@
  * here imports Phaser or touches the wire.
  */
 
-export type UpgradeId = 'damage' | 'speed' | 'firerate';
+export type UpgradeId = 'damage' | 'speed' | 'firerate' | 'regen';
 
 export interface UpgradeDef {
   id: UpgradeId;
@@ -42,6 +42,16 @@ export const UPGRADES: Record<UpgradeId, UpgradeDef> = {
     step: 0.08,
     maxStacks: 8,
   },
+  regen: {
+    id: 'regen',
+    name: 'Self Repair',
+    short: 'REG',
+    blurb: '+1.1 health per second',
+    colour: 0x3fae00,
+    cssColour: '#3fae00',
+    step: 1.1,
+    maxStacks: 8,
+  },
   firerate: {
     id: 'firerate',
     name: 'Pipeline Boost',
@@ -54,7 +64,7 @@ export const UPGRADES: Record<UpgradeId, UpgradeDef> = {
   },
 };
 
-export const UPGRADE_ORDER: UpgradeId[] = ['damage', 'speed', 'firerate'];
+export const UPGRADE_ORDER: UpgradeId[] = ['damage', 'speed', 'firerate', 'regen'];
 
 export const PROGRESSION = {
   /** Chips needed for one power-up. */
@@ -99,7 +109,7 @@ export class PlayerProgress {
   chips = 0;
   /** Chips collected across the whole run, for the end-of-run readout. */
   totalChips = 0;
-  readonly stacks: Record<UpgradeId, number> = { damage: 0, speed: 0, firerate: 0 };
+  readonly stacks: Record<UpgradeId, number> = { damage: 0, speed: 0, firerate: 0, regen: 0 };
 
   /** @returns true if this chip completed a set and earned a power-up. */
   addChip(): boolean {
@@ -151,7 +161,16 @@ export class PlayerProgress {
     return 1 / (1 + this.stacks.firerate * UPGRADES.firerate.step);
   }
 
+  /**
+   * Extra health per second from Self Repair stacks. Unlike the others this is
+   * additive rather than multiplicative — there is no base rate to scale, and a
+   * multiplier on a small number would make the first stack feel like nothing.
+   */
+  get bonusRegenPerSec(): number {
+    return this.stacks.regen * UPGRADES.regen.step;
+  }
+
   get totalStacks(): number {
-    return this.stacks.damage + this.stacks.speed + this.stacks.firerate;
+    return UPGRADE_ORDER.reduce((sum, id) => sum + this.stacks[id], 0);
   }
 }

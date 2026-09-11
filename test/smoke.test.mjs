@@ -424,6 +424,61 @@ await step('resuming restarts the simulation', async () => {
   return { ok: before !== after && !(await page.isVisible('#pause-veil')), note: 'horde moving again' };
 });
 
+await step('health regenerates once out of combat, not during it', async () => {
+  const out = await page.evaluate(async () => {
+    const scene = window.glitchburst.game.scene.getScene('game');
+    clearInterval(window.__keepAlive);
+
+    // Step out of the swarm first. Left where it was, the player takes contact
+    // damage throughout, which both suppresses regen (correctly — being hit
+    // resets the timer) and masks it. The test would then be measuring the
+    // horde, not regeneration.
+    scene.me.x = 140;
+    scene.me.y = 140;
+    scene.me.hp = 40;
+
+    // Freshly hit: regeneration must stay off.
+    scene.sinceDamage = 0;
+    await new Promise((r) => setTimeout(r, 500));
+    const duringCombat = scene.me.hp;
+
+    // Disengaged: it should climb.
+    scene.sinceDamage = 99;
+    await new Promise((r) => setTimeout(r, 900));
+    const afterDisengaging = scene.me.hp;
+
+    scene.me.hp = scene.me.maxHp;
+    window.__keepAlive = setInterval(() => { scene.me.hp = scene.me.maxHp; }, 100);
+    return { duringCombat, afterDisengaging };
+  });
+  return {
+    ok: out.duringCombat === 40 && out.afterDisengaging > 40,
+    note: `held at ${out.duringCombat} under fire, healed to ${out.afterDisengaging.toFixed(1)} after`,
+  };
+});
+
+await step('a reboot restores full health', async () => {
+  const out = await page.evaluate(async () => {
+    const scene = window.glitchburst.game.scene.getScene('game');
+    clearInterval(window.__keepAlive);
+    // Away from the horde, or the fresh reboot is chipped before it is read.
+    scene.me.x = 140;
+    scene.me.y = 140;
+    scene.deaths = 0;
+    scene.downedFor = 0;
+    scene.me.hp = scene.me.maxHp;
+    scene.takeDamage(99999);
+    scene.downedFor = 0.01;           // skip the wait
+    await new Promise((r) => requestAnimationFrame(r));
+    await new Promise((r) => requestAnimationFrame(r));
+    const hp = scene.me.hp;
+    scene.deaths = 0;
+    window.__keepAlive = setInterval(() => { scene.me.hp = scene.me.maxHp; }, 100);
+    return { hp, max: scene.me.maxHp };
+  });
+  return { ok: out.hp === out.max, note: `${out.hp}/${out.max}` };
+});
+
 await step('a solo run ends after three reboots, each slower than the last', async () => {
   const out = await page.evaluate(async () => {
     const scene = window.glitchburst.game.scene.getScene('game');

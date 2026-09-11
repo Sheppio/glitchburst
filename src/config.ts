@@ -153,6 +153,19 @@ export const PLAYER = {
    * playable value; the units here are per minute, not per second.
    */
   turnRateRpm: 240,
+
+  /**
+   * Passive health regeneration, per second, once out of combat.
+   *
+   * Deliberately slow, and gated behind a quiet period rather than ticking
+   * during a fight. Regen that runs while you are being hit turns every
+   * engagement into a damage race the player usually wins; regen that only
+   * starts once you have disengaged rewards backing off, which is the decision
+   * worth encouraging in a horde game.
+   */
+  regenPerSec: 1.1,
+  /** Seconds without taking damage before regeneration begins. */
+  regenDelaySec: 4,
 } as const;
 
 /** Derived once: RPM -> radians per second. */

@@ -319,6 +319,11 @@ function drawGlyph(g, c, m, id) {
         g.fillRect(c - 1.75, m - 3, 3.5, 10);
         g.fillRect(c + 3.5, m - 7, 3.5, 14);
     }
+    else if (id === 'regen') {
+        // Cross — the one glyph everybody already knows means health.
+        g.fillRect(c - 2.4, m - 8, 4.8, 16);
+        g.fillRect(c - 8, m - 2.4, 16, 4.8);
+    }
     else {
         // Radiating burst — impact.
         for (let n = 0; n < 6; n++) {

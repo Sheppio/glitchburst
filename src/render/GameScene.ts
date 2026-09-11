@@ -1,5 +1,5 @@
 import * as Phaser from 'phaser';
-import { HORDE, LIVES, NET, RENDER, TURN_RATE_RAD_PER_SEC, WORLD } from '../config.js';
+import { HORDE, LIVES, NET, PLAYER, RENDER, TURN_RATE_RAD_PER_SEC, WORLD } from '../config.js';
 import { HAPTIC } from '../input/settings.js';
 import type { InputManager } from '../input/InputManager.js';
 import type { SettingsStore } from '../input/settings.js';
@@ -229,10 +229,13 @@ export class GameScene extends Phaser.Scene {
   private abilityCooldown = 0;
   private abilityActiveUntil = 0;
   private contactCooldown = 0;
+  /** Seconds since the player last took a hit, for out-of-combat regeneration. */
+  private sinceDamage = 0;
   private downedFor = 0;
   /** Times this player has been reduced to zero health this run. */
   private deaths = 0;
   private gameOver = false;
+  private tornDown = false;
   private score = 0;
   private snapshotTick = 0;
   private lastWave = 0;
@@ -353,7 +356,13 @@ export class GameScene extends Phaser.Scene {
     if (room.isHost) this.onHostChange(true, 'initial');
 
     window.addEventListener('keydown', this.onKeyDown);
+    // Both events, because they are not interchangeable: stopping a scene emits
+    // SHUTDOWN, but destroying the *game* emits only DESTROY. Listening for
+    // SHUTDOWN alone left the host's 20Hz interval running after the game was
+    // gone — stepping a dead scene, and still publishing the old horde into the
+    // room, which the next run then inherited as its opening wave.
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.teardown());
+    this.events.once(Phaser.Scenes.Events.DESTROY, () => this.teardown());
   }
 
   override update(_time: number, delta: number): void {
@@ -427,6 +436,7 @@ export class GameScene extends Phaser.Scene {
 
     this.fireCooldown -= dt;
     this.abilityCooldown -= dt;
+    this.regenerate(dt);
 
     // Fire along the chassis, not the request: the turn rate has to cost
     // something or it is just an animation.
@@ -437,6 +447,28 @@ export class GameScene extends Phaser.Scene {
       (intent.firing ? FLAG_FIRING : 0) | (this.time.now < this.abilityActiveUntil ? FLAG_ABILITY : 0);
 
     this.checkEnemyContact(dt);
+  }
+
+  /**
+   * Out-of-combat healing.
+   *
+   * The delay is the design: healing through a fight turns every engagement
+   * into a damage race, whereas healing only once disengaged rewards backing
+   * off — the decision actually worth encouraging when you are outnumbered.
+   */
+  private regenerate(dt: number): void {
+    this.sinceDamage += dt;
+    if (this.me.hp >= this.me.maxHp) return;
+    if (this.sinceDamage < PLAYER.regenDelaySec) return;
+
+    const rate = PLAYER.regenPerSec + this.progression.progress.bonusRegenPerSec;
+    const before = this.me.hp;
+    this.me.hp = Math.min(this.me.maxHp, this.me.hp + rate * dt);
+
+    // A tick every few points, not every frame: a number per frame is noise.
+    if (Math.floor(this.me.hp / 10) > Math.floor(before / 10)) {
+      this.fx.healNumber(this.me.x, this.me.y - 30, 10);
+    }
   }
 
   private fireWeapon(angle: number, boosted: boolean): void {
@@ -692,6 +724,7 @@ export class GameScene extends Phaser.Scene {
     if (this.downedFor > 0) return;
 
     this.me.hp = Math.max(0, this.me.hp - amount);
+    this.sinceDamage = 0;
     this.cfg.sfx.hurt();
     this.fx.damageNumber(this.me.x, this.me.y - 26, amount);
     this.cameras.main.shake(120, 0.006);
@@ -767,9 +800,12 @@ export class GameScene extends Phaser.Scene {
   }
 
   private respawn(): void {
-    this.me.hp = Math.round(this.def.maxHp * 0.6);
+    // Full health. A partial reboot straight back into the wave that killed you
+    // tends to mean dying again immediately, which spends a life on nothing.
+    this.me.hp = this.me.maxHp;
     this.me.flags = 0;
     this.downedFor = 0;
+    this.sinceDamage = PLAYER.regenDelaySec;
     this.fx.ring(this.me.x, this.me.y, 160, this.def.colour, 500);
     this.publishPlayerNow();
   }
@@ -788,7 +824,7 @@ export class GameScene extends Phaser.Scene {
    */
   private hostStep(): void {
     const horde = this.horde;
-    if (!horde) return;
+    if (!horde || this.tornDown) return;
 
     // Real elapsed time, clamped. The clamp matters because browsers throttle
     // timers in background tabs: without it, a host that was hidden for ten
@@ -1503,6 +1539,10 @@ export class GameScene extends Phaser.Scene {
   };
 
   private teardown(): void {
+    // Idempotent: SHUTDOWN and DESTROY can both fire for one scene.
+    if (this.tornDown) return;
+    this.tornDown = true;
+
     window.removeEventListener('keydown', this.onKeyDown);
     this.stopHostLoop();
     for (const unsub of this.unsubs) unsub();

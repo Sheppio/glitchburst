@@ -9,7 +9,7 @@ import {
   encodePlayer, decodePlayer, encodeField, decodeField, sanitizeName,
 } from '../dist/net/codec.js';
 import { HORDE, PLAYER, TURN_RATE_RAD_PER_SEC } from '../dist/config.js';
-import { PlayerProgress, PROGRESSION, UPGRADES } from '../dist/sim/progression.js';
+import { PlayerProgress, PROGRESSION, UPGRADES, UPGRADE_ORDER } from '../dist/sim/progression.js';
 import { approachAngle, hashUnit } from '../dist/util.js';
 import { ENEMY_DEFS } from '../dist/sim/enemyTypes.js';
 import { pickTarget, targetScore, TARGETING } from '../dist/sim/targeting.js';
@@ -222,7 +222,9 @@ const run = (engine, seconds, t = targets(1)) => {
 
 {
   const p = new PlayerProgress();
-  for (const id of ['damage', 'speed', 'firerate']) {
+  // Drive from the table, not a hand-written list, or adding an upgrade
+  // silently stops this testing what it claims to.
+  for (const id of UPGRADE_ORDER) {
     for (let i = 0; i < UPGRADES[id].maxStacks; i++) p.grant(id);
   }
   check('a fully upgraded player rolls nothing', p.rollUpgrade() === null);
@@ -236,6 +238,19 @@ const run = (engine, seconds, t = targets(1)) => {
   const dmg = rolls.filter((r) => r === 'damage').length;
   check('rolls favour upgrades the player lacks', dmg / rolls.length < 0.2,
     `${((dmg / rolls.length) * 100).toFixed(1)}% rolled damage after 6 damage stacks`);
+}
+
+{
+  const p = new PlayerProgress();
+  check('self repair starts at nothing', p.bonusRegenPerSec === 0);
+  p.grant('regen');
+  p.grant('regen');
+  check('self repair stacks additively',
+    Math.abs(p.bonusRegenPerSec - UPGRADES.regen.step * 2) < 1e-9,
+    `+${p.bonusRegenPerSec.toFixed(1)} hp/s from two stacks`);
+  check('every upgrade is reachable from the order table',
+    UPGRADE_ORDER.length === Object.keys(UPGRADES).length,
+    UPGRADE_ORDER.join(', '));
 }
 
 /* ------------------------------------------------------------ drop rolls */

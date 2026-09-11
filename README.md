@@ -36,7 +36,7 @@ Developing needs the compiler:
 ```bash
 npm install
 npm run watch      # tsc --watch, rebuilding dist/ on save
-npm test           # 155 tests: simulation, codec, single client, mobile, two clients
+npm test           # 160 tests: simulation, codec, single client, mobile, two clients
 ```
 
 `dist/` is committed on purpose — it is what GitHub Pages serves.
@@ -242,6 +242,15 @@ you grind until bored rather than losing.
 comes from your friends rather than from a token count, and it makes the last
 player alive obviously important.
 
+A reboot restores **full** health. A partial one drops you straight back into
+the wave that just killed you, which usually spends the next life on nothing.
+
+Health also regenerates slowly on its own, but **only after four seconds without
+being hit**. Regen that ticks during a fight turns every engagement into a
+damage race the player generally wins; regen that waits until you have
+disengaged rewards backing off, which is the decision worth encouraging when
+outnumbered. The Self Repair upgrade adds to that rate.
+
 Either way, **each reboot takes longer than the last** — five seconds, then
 eight, then eleven, capped at twenty. That escalation is the real difficulty
 curve: a flat delay makes dying nearly free by the tenth time, while a rising
@@ -408,16 +417,16 @@ for a game — just don't build anything that needs privacy on top of it.
 npm test
 ```
 
-155 checks across four suites. The browser suites vendor Phaser locally and
+160 checks across four suites. The browser suites vendor Phaser locally and
 swap MQTT for a loopback stub that relays over `BroadcastChannel`, so two tabs
 share one "broker" and a real multi-client room can be tested offline.
 
-- **`sim.test.mjs`** (82) — codec round-trips, truncation tolerance, payload
+- **`sim.test.mjs`** (85) — codec round-trips, truncation tolerance, payload
   size at the cap, enemy cap, difficulty scaling, wave pacing, damage
   attribution, steering, decoy priority, host adoption, shockwave, progression
   and upgrade caps, deterministic drop rolls, turn-rate limiting, and the
   auto-aim scoring formula.
-- **`smoke.test.mjs`** (28) — menus, persistence, Phaser boot, election, 20 Hz
+- **`smoke.test.mjs`** (30) — menus, persistence, Phaser boot, election, 20 Hz
   batching, attacker-authority kills, point-blank hits, chip pickup and
   conversion, turn rate, abilities, pause, and broadcast rate under a starved
   renderer.
@@ -442,6 +451,10 @@ These caught eight real bugs. The most instructive:
   hit-tests `elementFromPoint` on the buttons for exactly this reason.
 - A `hidden` full-screen overlay still intercepted clicks, because an author
   `display` rule beats the `hidden` attribute.
+- Scene teardown listened only for Phaser's `SHUTDOWN`, but destroying the
+  *game* emits `DESTROY` instead — so the host's 20 Hz interval outlived the
+  destroyed game, stepped a dead scene, and kept publishing the old horde into
+  the room. Retrying inherited the previous run's wave as its opening one.
 - Bullets moved *before* being tested for collision, so a round covering 13px a
   frame could start in front of an enemy and end behind it having never been
   measured as touching. At the Overclocker's 1500 px/s that is 25px a frame —
