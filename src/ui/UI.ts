@@ -71,6 +71,14 @@ const SLIDERS: SliderDef[] = [
     format: percent,
   },
   {
+    key: 'zoom',
+    title: 'Camera zoom',
+    step: 0.05,
+    detail:
+      'Pull back to see more of the arena, or close in for a bigger picture. Worth pulling back on a phone, where the default slice is a keyhole.',
+    format: (value) => `${Math.round(value * 100)}%`,
+  },
+  {
     key: 'deadzone',
     title: 'Stick deadzone',
     step: 0.01,
@@ -179,6 +187,7 @@ export class UI {
     // rather than each call site remembering to repaint them.
     this.settings.events.on('change', () => this.syncSettings());
 
+    this.watchHudSize();
     this.buildKeyboard();
     // Raised by the gamepad navigator when a text field is activated: a
     // controller has no keys, so the UI supplies some.
@@ -264,6 +273,44 @@ export class UI {
   private setJoining(joining: boolean): void {
     this.text('btn-deploy', joining ? 'Join' : 'Deploy');
     this.text('class-heading', joining ? 'Join squad' : 'Select program');
+  }
+
+  /**
+   * How much of the viewport the HUD covers, top and bottom, in CSS pixels.
+   *
+   * Measured rather than hardcoded: the strips reflow with the viewport — they
+   * are shorter on a phone and taller once a reboot counter appears — and a
+   * fixed guess would be wrong on most screens and silently wrong on the rest.
+   *
+   * Only the full-width strips count. The squad panel is narrow and top-right,
+   * and insetting the whole arena for it would cost every player a band of
+   * screen to cover something most of them can see around.
+   */
+  /**
+   * Tell the renderer when the HUD strips change size.
+   *
+   * They reflow: the reboot counter appears, the upgrade row fills up, the
+   * window resizes, and on first show they go from hidden — zero-sized, and
+   * therefore measurable only as nonsense — to laid out. The camera pads itself
+   * by these heights, so it has to hear about every one of those.
+   */
+  private watchHudSize(): void {
+    if (typeof ResizeObserver !== 'function') return;
+    const observer = new ResizeObserver(() => {
+      document.dispatchEvent(new CustomEvent('gb:hud-resize'));
+    });
+    observer.observe(this.el('hud-top-row'));
+    observer.observe(this.el('hud-bottom-row'));
+  }
+
+  hudInsets(): { top: number; bottom: number } {
+    const viewport = window.innerHeight || 0;
+    const top = this.el('hud-top-row').getBoundingClientRect().bottom;
+    const bottomRect = this.el('hud-bottom-row').getBoundingClientRect();
+    return {
+      top: Math.max(0, Math.round(top)),
+      bottom: Math.max(0, Math.round(viewport - bottomRect.top)),
+    };
   }
 
   /* ----------------------------------------------------------------- lobby */

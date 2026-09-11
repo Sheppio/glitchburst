@@ -278,6 +278,87 @@ await page.evaluate(() => {
   window.__keepAlive = setInterval(() => { scene.me.hp = scene.me.maxHp; }, 100);
 });
 
+await step('the HUD never covers the arena at its edges', async () => {
+  // Bounded to the arena exactly, the camera stops dead at a wall, so a player
+  // pinned against the bottom edge is drawn underneath the HUD along with
+  // whatever is eating them. Reported from a real game.
+  const out = await page.evaluate(async () => {
+    const scene = window.glitchburst.game.scene.getScene('game');
+    const cam = scene.cameras.main;
+
+    const strips = () => ({
+      topBottom: document.getElementById('hud-top-row').getBoundingClientRect().bottom,
+      bottomTop: document.getElementById('hud-bottom-row').getBoundingClientRect().top,
+    });
+
+    // Screen pixel for a world y, at whatever zoom is in force.
+    const onScreen = (worldY) => (worldY - cam.worldView.y) * cam.zoom;
+
+    const park = async (worldY) => {
+      scene.me.x = 1200;
+      scene.me.y = worldY;
+      scene.player.setPosition(1200, worldY);
+      cam.centerOn(1200, worldY);
+      await new Promise((r) => setTimeout(r, 500));
+      // Measured together: the strips can reflow, and comparing a wall read
+      // now against a strip read later compares two different layouts.
+      return { player: onScreen(worldY), wall: onScreen(worldY < 800 ? 0 : 1600), strips: strips() };
+    };
+
+    const bottom = await park(1576);
+    const top = await park(24);
+    const b = cam.getBounds();
+    return {
+      bottom, top, zoom: cam.zoom,
+      live: scene.cfg.hudInsets(),
+      bounds: { y: Math.round(b.y), h: Math.round(b.height) },
+    };
+  });
+
+  // The wall should come to rest against the strip, and the player — who
+  // cannot go past the wall — is therefore in the clear.
+  const bottomOk =
+    out.bottom.wall <= out.bottom.strips.bottomTop + 2 && out.bottom.player < out.bottom.strips.bottomTop;
+  const topOk = out.top.wall >= out.top.strips.topBottom - 2 && out.top.player > out.top.strips.topBottom;
+
+  return {
+    ok: bottomOk && topOk,
+    note: `bottom wall rests at ${out.bottom.wall.toFixed(0)}px against a strip starting at ${out.bottom.strips.bottomTop.toFixed(0)}px; top wall at ${out.top.wall.toFixed(0)}px against ${out.top.strips.topBottom.toFixed(0)}px`,
+  };
+});
+
+await step('the zoom setting changes how much arena is visible', async () => {
+  const measure = async (zoom) => {
+    await page.evaluate((z) => window.glitchburst.settings.set('zoom', z), zoom);
+    await page.waitForTimeout(400);
+    return page.evaluate(() => {
+      const scene = window.glitchburst.game.scene.getScene('game');
+      const cam = scene.cameras.main;
+      return {
+        zoom: cam.zoom,
+        worldWidth: Math.round(cam.worldView.width),
+        // Screen furniture must not scale with the arena.
+        vignette: Math.round(scene.vignette.displayWidth * cam.zoom),
+      };
+    });
+  };
+
+  const normal = await measure(1);
+  const wide = await measure(0.6);
+  const close = await measure(1.4);
+  await page.evaluate(() => window.glitchburst.settings.set('zoom', 1));
+
+  return {
+    ok:
+      wide.worldWidth > normal.worldWidth &&
+      close.worldWidth < normal.worldWidth &&
+      // The vignette is pinned to the camera, which Phaser's zoom would
+      // otherwise scale along with everything else it draws.
+      Math.abs(wide.vignette - normal.vignette) <= 2,
+    note: `${close.worldWidth}px arena at 140%, ${normal.worldWidth} at 100%, ${wide.worldWidth} at 60%; vignette steady at ${normal.vignette}px`,
+  };
+});
+
 await step('every enemy kind has a texture at every level', async () => {
   // A missing texture key is a silent failure in Phaser — it renders a green
   // placeholder box rather than throwing — so this is checked explicitly.
@@ -811,7 +892,9 @@ await step('settings open from the pause veil and hand the match back', async ()
   const before = await positions();
   await page.waitForTimeout(700);
   const stillFrozen = (await positions()) === before;
-  const sliders = await page.$$eval('.slider-row', (n) => n.length);
+  // By key, not by count: a count breaks every time a setting is added and
+  // tells you nothing when it does.
+  const sliders = await page.$$eval('.slider-row', (n) => n.map((e) => e.dataset.key));
 
   await page.click('#btn-settings-back');
   await page.waitForSelector('#screen-hud:not([hidden])', { timeout: 4000 });
@@ -819,9 +902,12 @@ await step('settings open from the pause veil and hand the match back', async ()
   const backToPause = await page.isVisible('#pause-veil');
 
   return {
-    ok: stillFrozen && sliders === 3 && backToPause,
+    ok:
+      stillFrozen &&
+      ['sfxVolume', 'musicVolume'].every((k) => sliders.includes(k)) &&
+      backToPause,
     note: backToPause
-      ? `${sliders} sliders reachable, horde still frozen, returned to the pause veil`
+      ? `${sliders.length} sliders reachable (${sliders.join(', ')}), horde still frozen, returned to the pause veil`
       : 'Done did not return to the match',
   };
 });

@@ -119,6 +119,8 @@ export const DIFFICULTY = {
     /** Solo play gets a small handicap so one player can hold a lane. */
     soloHealthDiscount: 0.9,
 };
+/** Camera zoom limits. Mirrored by the settings slider's own range. */
+export const ZOOM = { min: 0.6, max: 1.4 };
 export const LIVES = {
     /**
      * Reboots available to a solo player. The fourth death ends the run.

@@ -131,6 +131,9 @@ export const DIFFICULTY = {
   soloHealthDiscount: 0.9,
 } as const;
 
+/** Camera zoom limits. Mirrored by the settings slider's own range. */
+export const ZOOM = { min: 0.6, max: 1.4 } as const;
+
 export const LIVES = {
   /**
    * Reboots available to a solo player. The fourth death ends the run.

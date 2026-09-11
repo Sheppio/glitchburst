@@ -289,6 +289,7 @@ function startRun() {
         playerName: name,
         sfx,
         onHud: (snapshot) => ui.updateHud(snapshot),
+        hudInsets: () => ui.hudInsets(),
         onBanner: (text, sub) => ui.banner(text, sub),
     };
     // The host is the one that declares the room to be playing; peers follow.

@@ -26,6 +26,14 @@ export interface InputSettings {
   sfxVolume: number;
   /** Background music, 0–1. Zero is mute, and stops the scheduler entirely. */
   musicVolume: number;
+  /**
+   * Camera zoom. Below 1 pulls back and shows more arena, above 1 closes in.
+   *
+   * Mostly a phone concern: a 6-inch screen showing the same slice of arena as
+   * a monitor is a keyhole, and being able to pull back is the difference
+   * between reacting to a wave and being surprised by it.
+   */
+  zoom: number;
 }
 
 /** Numeric settings and the range each is clamped to when read back. */
@@ -34,6 +42,7 @@ export const RANGES = {
   deadzone: { min: 0.15, max: 0.45 },
   sfxVolume: { min: 0, max: 1 },
   musicVolume: { min: 0, max: 1 },
+  zoom: { min: 0.6, max: 1.4 },
 } as const satisfies Record<string, { min: number; max: number }>;
 
 const STORAGE_KEY = 'glitchburst.input.v1';
@@ -49,6 +58,7 @@ export const DEFAULT_SETTINGS: InputSettings = {
   vibration: true,
   sfxVolume: 1,
   musicVolume: 1,
+  zoom: 1,
 };
 
 export interface SettingsEvents extends Record<string, unknown> {

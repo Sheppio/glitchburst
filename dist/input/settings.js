@@ -5,6 +5,7 @@ export const RANGES = {
     deadzone: { min: 0.15, max: 0.45 },
     sfxVolume: { min: 0, max: 1 },
     musicVolume: { min: 0, max: 1 },
+    zoom: { min: 0.6, max: 1.4 },
 };
 const STORAGE_KEY = 'glitchburst.input.v1';
 export const DEFAULT_SETTINGS = {
@@ -18,6 +19,7 @@ export const DEFAULT_SETTINGS = {
     vibration: true,
     sfxVolume: 1,
     musicVolume: 1,
+    zoom: 1,
 };
 /**
  * Input accessibility settings.

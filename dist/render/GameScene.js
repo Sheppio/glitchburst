@@ -1,5 +1,5 @@
 import * as Phaser from 'phaser';
-import { HORDE, LIVES, NET, PLAYER, RENDER, TURN_RATE_RAD_PER_SEC, WORLD } from '../config.js';
+import { HORDE, LIVES, NET, PLAYER, RENDER, TURN_RATE_RAD_PER_SEC, WORLD, ZOOM } from '../config.js';
 import { HAPTIC } from '../input/settings.js';
 import { decodeEvents, decodeField, decodeHorde, decodePause, decodeShots, decodePlayer, encodeDamage, encodeEvents, encodeField, encodeHorde, encodePause, encodePlayer, encodeShots, encodePlayerStats, decodePlayerStats, } from '../net/codec.js';
 import { Topics, segment } from '../net/topics.js';
@@ -95,6 +95,9 @@ export class GameScene extends Phaser.Scene {
      * sprite is drawn at a screen coordinate rather than a world one and nothing
      * has to be converted back every frame.
      */
+    vignette = null;
+    /** Last applied bounds, so the slow re-measure only touches the camera on a change. */
+    boundsSignature = '';
     markers = new Pool(() => ({
         sprite: this.add.image(0, 0, TEX.marker).setDepth(60).setScrollFactor(0).setVisible(false),
         active: false,
@@ -216,9 +219,25 @@ export class GameScene extends Phaser.Scene {
         this.bulletTrails = this.add.graphics().setDepth(23);
         this.buildVignette();
         this.cameras.main
-            .setBounds(0, 0, WORLD.width, WORLD.height)
             .startFollow(this.player, true, 0.12, 0.12)
             .setBackgroundColor('#f2f5f9');
+        this.applyZoom();
+        // The strips reflow with the window, shrink on a phone, and grow when the
+        // reboot counter appears — and at scene creation the HUD has not been shown
+        // yet, so the first measurement is of a hidden element. Re-measured on a
+        // slow timer, which is cheap because it only touches the camera when the
+        // numbers actually change.
+        this.scale.on(Phaser.Scale.Events.RESIZE, this.applyZoom);
+        this.unsubs.push(this.cfg.settings.events.on('change', this.applyZoom));
+        // The UI raises this whenever a strip actually changes size, including once
+        // on first layout — which matters, because at scene creation the HUD has
+        // not been shown yet and measuring it then measures a hidden element.
+        //
+        // An observer rather than a timer: Phaser's clock advances on the same
+        // capped delta as `update`, so on a slow renderer a 400ms repeat fired
+        // roughly every two seconds, and the camera spent that long bounded wrong.
+        document.addEventListener('gb:hud-resize', this.applyZoom);
+        this.unsubs.push(() => document.removeEventListener('gb:hud-resize', this.applyZoom));
         // Auto-aim asks the scene for a target; the scene is the only thing that
         // knows where the enemies are.
         input.aimAssist = (from, range) => this.nearestEnemy(from, range);
@@ -1258,6 +1277,50 @@ export class GameScene extends Phaser.Scene {
         }
     }
     /**
+     * Let the camera scroll past the arena walls by the height of the HUD.
+     *
+     * Bounded to the arena exactly, the camera stops dead at a wall — so a player
+     * pinned against the bottom edge ends up drawn *underneath* the bottom strip,
+     * along with whatever is eating them. Extending the bounds by the strips'
+     * own heights means the arena edge comes to rest just clear of them; what
+     * scrolls into view beyond the wall is empty ground, and the HUD is sitting
+     * on exactly that.
+     */
+    applyCameraBounds = () => {
+        const cam = this.cameras.main;
+        const zoom = cam.zoom || 1;
+        // The insets are screen pixels but the bounds are world units, so at half
+        // zoom a strip covers twice as much arena.
+        const { top, bottom } = this.cfg.hudInsets();
+        const worldTop = top / zoom;
+        const worldBottom = bottom / zoom;
+        const signature = `${Math.round(worldTop)}:${Math.round(worldBottom)}`;
+        if (signature === this.boundsSignature)
+            return;
+        this.boundsSignature = signature;
+        cam.setBounds(0, -worldTop, WORLD.width, WORLD.height + worldTop + worldBottom);
+    };
+    /**
+     * Apply the player's chosen zoom.
+     *
+     * Anything pinned to the camera has to be un-scaled by hand: Phaser's zoom
+     * multiplies everything the camera draws, `scrollFactor(0)` included, so the
+     * vignette and the edge markers would shrink and grow with the arena instead
+     * of staying put as screen furniture.
+     */
+    applyZoom = () => {
+        const cam = this.cameras.main;
+        const zoom = clamp(this.cfg.settings.current.zoom, ZOOM.min, ZOOM.max);
+        if (cam.zoom !== zoom)
+            cam.setZoom(zoom);
+        for (const marker of this.markers.items)
+            marker.sprite.setScale(1 / zoom);
+        this.vignette?.setDisplaySize(cam.width / zoom, cam.height / zoom);
+        // The bounds are expressed in world units, so a zoom change resizes them.
+        this.boundsSignature = '';
+        this.applyCameraBounds();
+    };
+    /**
      * Draw an arrow at the screen edge for everything worth knowing about that is
      * currently off screen.
      *
@@ -1281,6 +1344,9 @@ export class GameScene extends Phaser.Scene {
                 return;
             const marker = this.markers.acquire();
             marker.active = true;
+            // Un-scaled by the zoom, so a marker is the same size on screen whatever
+            // the player has the camera set to.
+            marker.sprite.setScale(1 / (this.cameras.main.zoom || 1));
             marker.sprite
                 .setPosition(found.x, found.y)
                 .setRotation(found.angle)
@@ -1577,16 +1643,12 @@ export class GameScene extends Phaser.Scene {
      */
     buildVignette() {
         const cam = this.cameras.main;
-        const vignette = this.add
+        this.vignette = this.add
             .image(cam.width / 2, cam.height / 2, TEX.vignette)
             .setScrollFactor(0)
             .setDepth(150)
             .setDisplaySize(cam.width, cam.height);
-        this.scale.on('resize', () => {
-            vignette
-                .setPosition(this.cameras.main.width / 2, this.cameras.main.height / 2)
-                .setDisplaySize(this.cameras.main.width, this.cameras.main.height);
-        });
+        this.scale.on('resize', () => this.applyZoom());
     }
     buildArena() {
         this.add.tileSprite(0, 0, WORLD.width, WORLD.height, TEX.grid).setOrigin(0).setDepth(0);

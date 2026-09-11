@@ -1,6 +1,6 @@
 # GLITCHBURST
 
-<!-- version -->**v0.2.20**<!-- /version --> — the build currently on Pages.
+<!-- version -->**v0.2.21**<!-- /version --> — the build currently on Pages.
 
 A co-op top-down horde shooter that runs entirely in the browser. **No game server.**
 Every client talks to a public MQTT broker over WebSockets, and one of them
@@ -38,7 +38,7 @@ Developing needs the compiler:
 ```bash
 npm install
 npm run watch      # tsc --watch, rebuilding dist/ on save
-npm test           # 304 tests: simulation, codec, single client, mobile, controller, two clients
+npm test           # 306 tests: simulation, codec, single client, mobile, controller, two clients
 ```
 
 `dist/` is committed on purpose — it is what GitHub Pages serves.
@@ -216,6 +216,32 @@ is useless exactly when the ability matters, since no plausible factor makes a
 decoy 700px away beat a player the enemy is already touching.
 
 ### Reading the fight
+
+### The camera and the HUD
+
+The HUD is an opaque overlay, and the camera used to be bounded to the arena
+exactly — so at a wall it stopped dead and a player pinned against the bottom
+edge was drawn *underneath* the bottom strip, along with whatever was eating
+them. The camera's bounds are now padded by the strips' own heights, so the
+arena edge comes to rest just clear of them; what scrolls into view beyond the
+wall is empty ground, and the HUD is sitting on exactly that.
+
+The heights are **measured, not assumed**: the strips reflow with the viewport,
+shrink on a phone, and grow when the reboot counter appears. A `ResizeObserver`
+on the two strips tells the renderer when they change — including on first
+layout, which matters because the scene is created while the HUD is still
+hidden and therefore measures as zero. Deliberately not a timer: Phaser's clock
+advances on the same capped delta as `update`, so on a slow renderer a 400 ms
+repeat fired roughly every two seconds and the camera spent that long bounded
+wrong.
+
+**Zoom** is a settings slider, 60% to 140%. Mostly a phone concern — a six-inch
+screen showing a monitor's slice of arena is a keyhole. A screen-space inset is
+worth `inset / zoom` in world units, so the camera padding scales with it; and
+anything pinned to the camera is un-scaled by hand, because Phaser's zoom
+multiplies everything it draws, `scrollFactor(0)` included, so the vignette and
+the edge markers would otherwise grow and shrink with the arena instead of
+staying put as screen furniture.
 
 ### Off-screen markers
 
@@ -704,7 +730,7 @@ for a game — just don't build anything that needs privacy on top of it.
 npm test
 ```
 
-304 checks across five suites. The browser suites vendor Phaser locally and
+306 checks across five suites. The browser suites vendor Phaser locally and
 swap MQTT for a loopback stub that relays over `BroadcastChannel`, so two tabs
 share one "broker" and a real multi-client room can be tested offline.
 
@@ -715,7 +741,7 @@ share one "broker" and a real multi-client room can be tested offline.
   scoring formula, enemy levels and their health/reward curves, wave streaming
   and the tempo floor, the autopilot's steering bands and its survival against a
   live horde, and the audio volume curve.
-- **`smoke.test.mjs`** (44) — menus, settings persistence and migration, Phaser
+- **`smoke.test.mjs`** (46) — menus, settings persistence and migration, Phaser
   boot, election, 20 Hz batching, attacker-authority kills, point-blank hits,
   chip pickup and conversion, turn rate, abilities, pause, settings over a live
   match, and broadcast rate under a starved renderer.

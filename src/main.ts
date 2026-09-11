@@ -315,6 +315,7 @@ function startRun(): void {
     playerName: name,
     sfx,
     onHud: (snapshot: HudSnapshot) => ui.updateHud(snapshot),
+    hudInsets: () => ui.hudInsets(),
     onBanner: (text, sub) => ui.banner(text, sub),
   };
 
