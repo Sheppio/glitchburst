@@ -1,4 +1,20 @@
 import { buildRig, launch, reporter, startServer } from './rig.mjs';
+import { UPGRADE_ORDER } from '../dist/sim/progression.js';
+
+/**
+ * The observable effect of each upgrade.
+ *
+ * Checked against `UPGRADE_ORDER` below rather than assumed, because the
+ * previous version of this test listed three effects by hand and a fourth
+ * upgrade had since been added: whenever the roll landed on the unlisted one it
+ * failed, and the rest of the time it silently stopped testing anything.
+ */
+const EFFECT_OF = {
+  damage: 'damageMultiplier',
+  speed: 'speedMultiplier',
+  firerate: 'fireIntervalMultiplier',
+  regen: 'bonusRegenPerSec',
+};
 
 await buildRig();
 const { server, url } = await startServer();
@@ -45,10 +61,63 @@ await step('settings toggles render', async () => {
   // breaks every time a setting is added and tells you nothing when it does.
   const keys = await page.$$eval('.toggle', (n) => n.map((e) => e.dataset.key));
   await page.click('#btn-settings-back');
-  const required = ['autoFire', 'autoAim', 'sfx', 'music'];
+  const required = ['autoFire', 'autoAim'];
   return {
     ok: required.every((k) => keys.includes(k)),
     note: `${keys.length} toggles: ${keys.join(', ')}`,
+  };
+});
+
+await step('audio levels are sliders, not switches', async () => {
+  await page.click('#btn-settings');
+  const rows = await page.$$eval('.slider-row', (n) =>
+    n.map((e) => {
+      const input = e.querySelector('input[type="range"]');
+      return { key: e.dataset.key, min: Number(input.min), max: Number(input.max) };
+    }),
+  );
+  await page.click('#btn-settings-back');
+
+  const sfx = rows.find((r) => r.key === 'sfxVolume');
+  const music = rows.find((r) => r.key === 'musicVolume');
+  return {
+    ok: Boolean(sfx && music) && sfx.min === 0 && sfx.max === 1 && music.min === 0 && music.max === 1,
+    note: rows.map((r) => `${r.key} ${r.min}–${r.max}`).join(', ') || 'no sliders found',
+  };
+});
+
+await step('a volume slider moves the gain it controls', async () => {
+  const out = await page.evaluate(async () => {
+    const { audio, settings } = window.glitchburst;
+    audio.unlock();
+    await new Promise((r) => setTimeout(r, 120));
+
+    // Drive the DOM control, not the store: this is the wiring under test.
+    const set = async (value) => {
+      const el = document.getElementById('range-sfxVolume');
+      el.value = String(value);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 140));
+      return audio.destination('sfx')?.gain.value ?? null;
+    };
+
+    document.getElementById('btn-settings').click();
+    const full = await set(1);
+    const half = await set(0.5);
+    const readout = document.querySelector('.slider-row[data-key="sfxVolume"] [data-value]').textContent;
+    const zero = await set(0);
+    const mutedLabel = document.querySelector('.slider-row[data-key="sfxVolume"] [data-value]').textContent;
+    await set(1);
+    document.getElementById('btn-settings-back').click();
+
+    return { full, half, zero, readout, mutedLabel, stored: settings.current.sfxVolume };
+  });
+
+  // Zero detaches the channel entirely rather than scaling it to nothing, so
+  // a muted game builds no oscillators at all.
+  return {
+    ok: out.full > out.half && out.half > 0 && out.zero === null && out.mutedLabel === 'MUTED',
+    note: `100% → ${out.full?.toFixed(3)}, 50% → ${out.half?.toFixed(3)} (${out.readout}), 0% → detached`,
   };
 });
 
@@ -65,6 +134,91 @@ await step('the callsign and class are remembered across a reload', async () => 
   // Hand the next step a clean menu rather than the class screen.
   await page.click('#btn-class-back');
   return { ok: restored === 'PERSIST' && cls === 'true', note: `restored "${restored}" as Encoder` };
+});
+
+await step('every setting survives a reload', async () => {
+  // One toggle and both sliders, so the assertion covers the boolean path and
+  // the numeric one — the numbers are the new risk, since they are clamped and
+  // migrated on the way back in.
+  await page.evaluate(() => {
+    const { settings } = window.glitchburst;
+    settings.set('southpaw', true);
+    settings.set('sfxVolume', 0.35);
+    settings.set('musicVolume', 0);
+  });
+  await page.goto(url, { waitUntil: 'networkidle' });
+
+  const out = await page.evaluate(() => {
+    const s = window.glitchburst.settings.current;
+    document.getElementById('btn-settings').click();
+    const value = (key) =>
+      Number(document.querySelector(`.slider-row[data-key="${key}"] input`).value);
+    const readout = document.querySelector('.slider-row[data-key="musicVolume"] [data-value]').textContent;
+    document.getElementById('btn-settings-back').click();
+    return { stored: s, sliderSfx: value('sfxVolume'), sliderMusic: value('musicVolume'), readout };
+  });
+
+  // Restore, so the rest of the run is not played on a muted, southpaw client.
+  await page.evaluate(() => {
+    const { settings } = window.glitchburst;
+    settings.set('southpaw', false);
+    settings.set('sfxVolume', 1);
+    settings.set('musicVolume', 1);
+  });
+
+  const ok =
+    out.stored.southpaw === true &&
+    out.stored.sfxVolume === 0.35 &&
+    out.stored.musicVolume === 0 &&
+    // The controls have to show the restored values, not just hold them.
+    out.sliderSfx === 0.35 &&
+    out.sliderMusic === 0 &&
+    out.readout === 'MUTED';
+  return { ok, note: `sfx ${out.sliderSfx}, music ${out.sliderMusic} (${out.readout}), southpaw ${out.stored.southpaw}` };
+});
+
+await step('legacy on/off audio settings migrate to levels', async () => {
+  // Anyone who played before this build has booleans in storage. Reading one as
+  // a volume would mute them silently, which is the worst kind of regression:
+  // it looks like broken audio, not like a setting.
+  await page.evaluate(() => {
+    localStorage.setItem(
+      'glitchburst.input.v1',
+      JSON.stringify({ sfx: true, music: false, southpaw: true, deadzone: 0.3 }),
+    );
+  });
+  await page.goto(url, { waitUntil: 'networkidle' });
+
+  const s = await page.evaluate(() => window.glitchburst.settings.current);
+  await page.evaluate(() => {
+    window.glitchburst.settings.set('southpaw', false);
+    window.glitchburst.settings.set('musicVolume', 1);
+    window.glitchburst.settings.set('deadzone', 0.15);
+  });
+
+  return {
+    ok: s.sfxVolume === 1 && s.musicVolume === 0 && s.southpaw === true && s.deadzone === 0.3 && !('sfx' in s),
+    note: `sfx:true → ${s.sfxVolume}, music:false → ${s.musicVolume}, unrelated settings kept`,
+  };
+});
+
+await step('out-of-range stored values are clamped, not trusted', async () => {
+  await page.evaluate(() => {
+    localStorage.setItem(
+      'glitchburst.input.v1',
+      JSON.stringify({ sfxVolume: 9, musicVolume: -3, deadzone: 'nonsense' }),
+    );
+  });
+  await page.goto(url, { waitUntil: 'networkidle' });
+
+  const s = await page.evaluate(() => window.glitchburst.settings.current);
+  await page.evaluate(() => localStorage.removeItem('glitchburst.input.v1'));
+  await page.goto(url, { waitUntil: 'networkidle' });
+
+  return {
+    ok: s.sfxVolume === 1 && s.musicVolume === 0 && s.deadzone === 0.15 && Number.isFinite(s.deadzone),
+    note: `9 → ${s.sfxVolume}, -3 → ${s.musicVolume}, "nonsense" → ${s.deadzone}`,
+  };
 });
 
 await step('create room generates a code', async () => {
@@ -381,36 +535,53 @@ await step('a full set of chips converts into a power-up', async () => {
 });
 
 await step('collecting a power-up upgrades the player', async () => {
-  const out = await page.evaluate(async () => {
+  const unmapped = UPGRADE_ORDER.filter((id) => !EFFECT_OF[id]);
+  if (unmapped.length) return { ok: false, note: `this test has no effect mapped for ${unmapped.join(', ')}` };
+
+  const out = await page.evaluate(async (effectOf) => {
     const scene = window.glitchburst.game.scene.getScene('game');
     const powerUp = scene.progression.powerUps.items.find((p) => p.active);
     if (!powerUp) return { ok: false, why: 'no power-up present' };
-    const before = { ...scene.progression.progress.stacks };
-    const dmg = scene.progression.progress.damageMultiplier;
-    const spd = scene.progression.progress.speedMultiplier;
-    const rof = scene.progression.progress.fireIntervalMultiplier;
+
+    const read = () => {
+      const p = scene.progression.progress;
+      const out = { stacks: { ...p.stacks } };
+      for (const effect of Object.values(effectOf)) out[effect] = p[effect];
+      return out;
+    };
+
+    const before = read();
     // Walk it onto the player.
     powerUp.x = scene.me.x;
     powerUp.y = scene.me.y;
     await new Promise((r) => setTimeout(r, 300));
-    const after = scene.progression.progress.stacks;
-    const gained = Object.keys(after).find((k) => after[k] > before[k]);
+    const after = read();
+
+    const gained = Object.keys(after.stacks).find((k) => after.stacks[k] > before.stacks[k]);
     // A power-up is three sprites — crystal, orbit and shadow. They have to
     // leave play together, or collecting one strands its ring on the floor.
     const stranded = scene.progression.powerUps.items.some(
       (p) => !p.active && (p.sprite.visible || p.orbit.visible || p.shadow.visible),
     );
-    const changed =
-      scene.progression.progress.damageMultiplier !== dmg ||
-      scene.progression.progress.speedMultiplier !== spd ||
-      scene.progression.progress.fireIntervalMultiplier !== rof;
+    // The stack has to move the thing it claims to: a counter that goes up
+    // without changing the player is exactly the bug worth catching.
+    const effect = gained ? effectOf[gained] : null;
+    const applied = Boolean(effect) && after[effect] !== before[effect];
+
     return {
-      ok: Boolean(gained) && changed && !stranded,
-      why: stranded ? 'collected power-up left sprites on screen' : (gained ?? 'no stack gained'),
+      ok: Boolean(gained) && applied && !stranded,
+      why: stranded
+        ? 'collected power-up left sprites on screen'
+        : !gained
+          ? 'no stack gained'
+          : `${gained} stack gained but ${effect} did not move`,
       gained,
+      effect,
+      value: effect ? after[effect] : null,
     };
-  });
-  return { ok: out.ok, note: out.ok ? `gained a ${out.gained} stack` : out.why };
+  }, EFFECT_OF);
+
+  return { ok: out.ok, note: out.ok ? `gained a ${out.gained} stack — ${out.effect} now ${out.value}` : out.why };
 });
 
 await step('the player turns at a limited rate instead of snapping', async () => {
@@ -447,6 +618,30 @@ await step('host can pause the whole room', async () => {
   const after = await positions();
   const veiled = await page.isVisible('#pause-veil');
   return { ok: veiled && before === after && before.length > 0, note: veiled ? 'horde frozen behind the veil' : 'no veil' };
+});
+
+await step('settings open from the pause veil and hand the match back', async () => {
+  await page.click('#btn-pause-settings');
+  await page.waitForSelector('#screen-settings:not([hidden])', { timeout: 4000 });
+
+  // The point of opening settings here is to change audio mid-match, so the
+  // controls have to be real, and the horde has to stay frozen behind them.
+  const before = await positions();
+  await page.waitForTimeout(700);
+  const stillFrozen = (await positions()) === before;
+  const sliders = await page.$$eval('.slider-row', (n) => n.length);
+
+  await page.click('#btn-settings-back');
+  await page.waitForSelector('#screen-hud:not([hidden])', { timeout: 4000 });
+  // Back to the paused match, not out to the main menu.
+  const backToPause = await page.isVisible('#pause-veil');
+
+  return {
+    ok: stillFrozen && sliders === 3 && backToPause,
+    note: backToPause
+      ? `${sliders} sliders reachable, horde still frozen, returned to the pause veil`
+      : 'Done did not return to the match',
+  };
 });
 
 await step('resuming restarts the simulation', async () => {
@@ -561,12 +756,12 @@ await step('audio starts after a gesture and mutes on demand', async () => {
 
     const gainOf = (ch) => audio.destination(ch)?.gain.value ?? null;
     const before = { sfx: gainOf('sfx'), music: gainOf('music') };
-    audio.setEnabled('sfx', false);
-    audio.setEnabled('music', false);
+    audio.setVolume('sfx', 0);
+    audio.setVolume('music', 0);
     await new Promise((r) => setTimeout(r, 120));
     const muted = { sfx: audio.destination('sfx'), music: audio.destination('music') };
-    audio.setEnabled('sfx', true);
-    audio.setEnabled('music', true);
+    audio.setVolume('sfx', 1);
+    audio.setVolume('music', 1);
 
     return { state: audio.context?.state ?? 'none', threw, before, mutedSfx: muted.sfx, playing: music.isPlaying };
   });

@@ -36,7 +36,7 @@ Developing needs the compiler:
 ```bash
 npm install
 npm run watch      # tsc --watch, rebuilding dist/ on save
-npm test           # 176 tests: simulation, codec, single client, mobile, two clients
+npm test           # 190 tests: simulation, codec, single client, mobile, two clients
 ```
 
 `dist/` is committed on purpose — it is what GitHub Pages serves.
@@ -430,19 +430,19 @@ for a game — just don't build anything that needs privacy on top of it.
 npm test
 ```
 
-176 checks across four suites. The browser suites vendor Phaser locally and
+190 checks across four suites. The browser suites vendor Phaser locally and
 swap MQTT for a loopback stub that relays over `BroadcastChannel`, so two tabs
 share one "broker" and a real multi-client room can be tested offline.
 
-- **`sim.test.mjs`** (100) — codec round-trips, truncation tolerance, payload
+- **`sim.test.mjs`** (108) — codec round-trips, truncation tolerance, payload
   size at the cap, enemy cap, difficulty scaling, wave pacing, damage
   attribution, steering, decoy priority, host adoption, shockwave, progression
-  and upgrade caps, deterministic drop rolls, turn-rate limiting, and the
-  auto-aim scoring formula.
-- **`smoke.test.mjs`** (31) — menus, persistence, Phaser boot, election, 20 Hz
-  batching, attacker-authority kills, point-blank hits, chip pickup and
-  conversion, turn rate, abilities, pause, and broadcast rate under a starved
-  renderer.
+  and upgrade caps, deterministic drop rolls, turn-rate limiting, the auto-aim
+  scoring formula, and the audio volume curve.
+- **`smoke.test.mjs`** (37) — menus, settings persistence and migration, Phaser
+  boot, election, 20 Hz batching, attacker-authority kills, point-blank hits,
+  chip pickup and conversion, turn rate, abilities, pause, settings over a live
+  match, and broadcast rate under a starved renderer.
 - **`mobile.test.mjs`** (14) — an emulated Pixel with a touchscreen and no
   mouse: taps through the whole flow, and hit-tests that nothing invisible is
   covering the buttons.
@@ -519,7 +519,27 @@ to schedule next.
 Browsers refuse to start audio without a user gesture, so the context is created
 on the first click, tap or keypress and everything no-ops until then. Music
 starts when a match does, not on the menu — opening a shared link should not
-ambush someone at work. Both channels have toggles in settings.
+ambush someone at work.
+
+### Volume
+
+Both channels are **sliders**, not switches, and settings is reachable from the
+pause veil as well as the menu — mid-match is when you actually discover the
+music is too loud.
+
+Slider position is squared before it reaches the gain node. A gain control wired
+straight through spends its bottom quarter going from silent to loud and its top
+half doing nothing audible, because loudness is roughly logarithmic in
+amplitude; squaring puts half-travel at about **-12 dB**, which reads as
+"noticeably quieter" rather than "barely moved". Full travel is a per-channel
+reference level rather than 1.0, which is how music stays a bed under the
+effects at equal slider positions.
+
+Zero is mute, and it means it: `destination()` returns null, so a muted channel
+builds **no oscillators at all** rather than building them and multiplying by
+zero. Muting the music stops the scheduler outright — and sliding it back up
+from the pause screen has to restart it, which is the one bit of state that
+cannot be expressed as gain alone.
 
 ## A note on performance
 

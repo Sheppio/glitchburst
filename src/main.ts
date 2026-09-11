@@ -51,16 +51,33 @@ const music = new Music(audio);
 
 const unlockAudio = () => {
   audio.unlock();
-  audio.setEnabled('sfx', settings.current.sfx);
-  audio.setEnabled('music', settings.current.music);
+  applyVolumes();
+};
+
+const applyVolumes = () => {
+  audio.setVolume('sfx', settings.current.sfxVolume);
+  audio.setVolume('music', settings.current.musicVolume);
+};
+
+/**
+ * Music follows the level, not just the match.
+ *
+ * The scheduler is real work — a 25ms interval building oscillators — so a
+ * muted track is stopped outright rather than left running into a zero gain.
+ * That makes the level a start/stop signal too: sliding music back up from the
+ * pause screen has to bring the scheduler back with it.
+ */
+const syncMusic = () => {
+  if (game && settings.current.musicVolume > 0) music.start();
+  else music.stop();
 };
 for (const event of ['pointerdown', 'keydown', 'touchstart'] as const) {
   window.addEventListener(event, unlockAudio, { passive: true });
 }
 
-settings.events.on('change', ({ settings: s }) => {
-  audio.setEnabled('sfx', s.sfx);
-  audio.setEnabled('music', s.music);
+settings.events.on('change', () => {
+  applyVolumes();
+  syncMusic();
 });
 const net = new MqttNet();
 const input = new InputManager(document.body, settings);
@@ -113,6 +130,18 @@ const ui = new UI(uiRoot, settings, {
   onTogglePause() {
     const scene = game?.scene.getScene('game') as GameScene | undefined;
     scene?.togglePause();
+  },
+
+  /**
+   * Settings opened over a paused match.
+   *
+   * The pad drives the character in-game, so menu navigation stands down on
+   * deploy. A modal settings screen needs it back — otherwise a console player
+   * can reach the pause veil but cannot move through the screen it opens.
+   */
+  onSettingsVisible(visible) {
+    if (visible) navigator_.start();
+    else navigator_.stop();
   },
 
   onCancelConnect() {
@@ -226,7 +255,7 @@ async function deploy(cls: ClassId): Promise<void> {
   // Music belongs to the match. Starting it on the menu ambushes anyone who
   // opened a shared link somewhere they would rather not be making noise.
   unlockAudio();
-  if (settings.current.music) music.start();
+  syncMusic();
   ui.show('hud');
   ui.setRoomCode(pendingRoomCode);
   connecting = false;

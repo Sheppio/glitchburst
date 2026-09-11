@@ -409,6 +409,47 @@ body.console-platform .console-banner { display: flex; }
 .toggle[aria-pressed="true"] .switch::after { transform: translateX(20px); }
 .toggle[aria-pressed="true"] { border-color: var(--cyan); }
 
+/* --------------------------------------------------------------- sliders */
+
+.slider-list { display: grid; gap: 4px; }
+
+/* Framed like the toggles above them, so the settings panel reads as one list
+   of controls rather than two unrelated blocks. */
+.slider-row {
+  padding: 13px 15px;
+  border-radius: var(--radius-sm);
+  border: 1.5px solid var(--line);
+  background: var(--surface);
+  margin-bottom: 5px;
+}
+
+.slider-row label {
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--ink);
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+
+.slider-row .value {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+}
+
+/* A muted channel is a state worth seeing at a glance, not a thumb position
+   you have to read off the track. */
+.slider-row.muted { border-color: var(--line); }
+.slider-row.muted .value { color: var(--ink-faint); }
+.slider-row.muted input[type="range"] { accent-color: var(--ink-faint); }
+
+.slider-row .field-hint { margin-top: 2px; }
+
+.pause-actions { justify-content: center; margin-top: 16px; }
+.pause-actions .btn { flex: 0 1 auto; min-width: 118px; }
+
 /* ----------------------------------------------------------------- pills */
 
 .pill {

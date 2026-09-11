@@ -1,6 +1,32 @@
 import { BROKERS } from '../config.js';
 import { CLASSES, CLASS_ORDER, classDps, isClassId, weaponRange } from '../sim/classes.js';
+import { RANGES } from '../input/settings.js';
 import { VERSION } from '../version.js';
+/** 0.4 → "40%", 0 → "MUTED". Zero is worth spelling out; "0%" reads as a bug. */
+const percent = (value) => (value <= 0 ? 'MUTED' : `${Math.round(value * 100)}%`);
+const SLIDERS = [
+    {
+        key: 'sfxVolume',
+        title: 'Sound effects',
+        step: 0.05,
+        detail: 'Weapons, impacts, pickups and abilities. At zero no effect is built at all.',
+        format: percent,
+    },
+    {
+        key: 'musicVolume',
+        title: 'Music',
+        step: 0.05,
+        detail: 'Background track, synthesised in the browser — there is no audio file to download.',
+        format: percent,
+    },
+    {
+        key: 'deadzone',
+        title: 'Stick deadzone',
+        step: 0.01,
+        detail: 'A fixed 0.15 per-axis filter is always applied to stop stick drift on worn controllers. This adds radial deadzone on top.',
+        format: (value) => value.toFixed(2),
+    },
+];
 /** Where the player's callsign and last class are remembered between visits. */
 const CALLSIGN_KEY = 'glitchburst.callsign';
 const CLASS_KEY = 'glitchburst.class';
@@ -24,16 +50,6 @@ const TOGGLES = [
         key: 'southpaw',
         title: 'Southpaw layout',
         detail: 'Swap the movement and aim halves of the screen.',
-    },
-    {
-        key: 'sfx',
-        title: 'Sound effects',
-        detail: 'Weapons, impacts, pickups and abilities.',
-    },
-    {
-        key: 'music',
-        title: 'Music',
-        detail: 'Background track. Synthesised in the browser — there is no audio file to download.',
     },
     {
         key: 'vibration',
@@ -77,6 +93,8 @@ export class UI {
     selectedClass = readStoredClass();
     bannerTimer = 0;
     current = 'menu';
+    /** Where "Done" goes back to. Settings is reachable from the menu and mid-match. */
+    settingsReturn = 'menu';
     constructor(root, settings, callbacks, sfx) {
         this.root = root;
         this.settings = settings;
@@ -90,7 +108,13 @@ export class UI {
         this.buildBrokerList();
         this.buildClassGrid();
         this.buildToggles();
+        this.buildSliders();
+        this.syncSettings();
         this.wireButtons();
+        // Settings are changed from three places — this screen, the HUD assist
+        // chips, and the store's own defaults — so the controls follow the store
+        // rather than each call site remembering to repaint them.
+        this.settings.events.on('change', () => this.syncSettings());
         this.detectConsolePlatform();
         document.addEventListener('gb:focus-locked', () => {
             this.toast('Gamepad focus locked to the browser window.', 'good');
@@ -130,8 +154,14 @@ export class UI {
     }
     show(screen) {
         this.current = screen;
-        for (const [id, el] of this.screens)
+        for (const [id, el] of this.screens) {
             el.hidden = id !== screen;
+            // Screens scroll when they outgrow the viewport, and a hidden one keeps
+            // its offset. Opening settings from the pause veil would otherwise land
+            // wherever it was left — halfway down, title off-screen.
+            if (id === screen)
+                el.scrollTop = 0;
+        }
         // The HUD is an overlay on live gameplay; every other screen is modal.
         this.root.classList.toggle('in-game', screen === 'hud');
     }
@@ -345,33 +375,87 @@ export class UI {
             button.addEventListener('click', () => {
                 const next = !this.settings.current[def.key];
                 this.settings.set(def.key, next);
-                this.syncToggles();
                 this.sfx.toggle(Boolean(next));
             });
             return button;
         }));
-        const range = this.input('range-deadzone');
-        range.value = String(this.settings.current.deadzone);
-        range.addEventListener('input', () => {
-            const value = Number(range.value);
-            this.settings.set('deadzone', value);
-            this.text('deadzone-value', value.toFixed(2));
-        });
-        this.syncToggles();
     }
-    syncToggles() {
+    /**
+     * The numeric settings: two audio levels and the stick deadzone.
+     *
+     * All three are the same widget, so they are generated from one table rather
+     * than hand-written — the bounds come from the store's own `RANGES`, which
+     * means the slider and the clamp applied to stored values can never disagree.
+     */
+    buildSliders() {
+        const list = this.el('slider-list');
+        list.replaceChildren(...SLIDERS.map((def) => {
+            const { min, max } = RANGES[def.key];
+            const row = document.createElement('div');
+            row.className = 'field slider-row';
+            row.dataset['key'] = def.key;
+            const id = `range-${def.key}`;
+            row.innerHTML = `
+          <label for="${id}">${def.title} <span class="value" data-value>—</span></label>
+          <input id="${id}" type="range" min="${min}" max="${max}" step="${def.step}" />
+          <p class="field-hint">${def.detail}</p>
+        `;
+            const range = row.querySelector('input');
+            // `input` fires continuously through a drag, so the level follows the
+            // thumb and you hear the result while you are still holding it.
+            range.addEventListener('input', () => this.settings.set(def.key, Number(range.value)));
+            // `change` fires once, on release. A click then confirms the level you
+            // landed on — the music channel is audible live, the effects one is not.
+            if (def.key === 'sfxVolume')
+                range.addEventListener('change', () => this.sfx.click());
+            return row;
+        }));
+    }
+    /** Push the stored values back onto every control. */
+    syncSettings() {
         const settings = this.settings.current;
         for (const button of this.root.querySelectorAll('.toggle')) {
             const key = button.dataset['key'];
             button.setAttribute('aria-pressed', String(Boolean(settings[key])));
         }
-        this.text('deadzone-value', settings.deadzone.toFixed(2));
+        for (const def of SLIDERS) {
+            const row = this.root.querySelector(`.slider-row[data-key="${def.key}"]`);
+            if (!row)
+                continue;
+            const value = settings[def.key];
+            row.querySelector('input').value = String(value);
+            const readout = row.querySelector('[data-value]');
+            if (readout)
+                readout.textContent = def.format(value);
+            row.classList.toggle('muted', value <= 0);
+        }
+    }
+    /**
+     * Open settings, remembering where we came from.
+     *
+     * Reachable from the pause veil as well as the main menu, and "Done" has to
+     * land back on whichever it was — dropping a paused player out to the main
+     * menu because they turned the music down would abandon their match.
+     */
+    openSettings() {
+        this.settingsReturn = this.current;
+        this.syncSettings();
+        this.show('settings');
+        if (this.settingsReturn === 'hud')
+            this.callbacks.onSettingsVisible(true);
+    }
+    closeSettings() {
+        const back = this.settingsReturn;
+        this.show(back);
+        if (back === 'hud')
+            this.callbacks.onSettingsVisible(false);
     }
     wireButtons() {
         this.on('btn-create', () => this.callbacks.onCreateRoom(this.callsign));
         this.on('btn-join-screen', () => this.show('join'));
-        this.on('btn-settings', () => this.show('settings'));
-        this.on('btn-settings-back', () => this.show(this.current === 'settings' ? 'menu' : this.current));
+        this.on('btn-settings', () => this.openSettings());
+        this.on('btn-pause-settings', () => this.openSettings());
+        this.on('btn-settings-back', () => this.closeSettings());
         this.on('btn-join-back', () => this.show('menu'));
         this.on('btn-class-back', () => this.show('menu'));
         this.on('btn-cancel-connect', () => this.callbacks.onCancelConnect());

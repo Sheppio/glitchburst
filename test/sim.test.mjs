@@ -16,6 +16,8 @@ import { pickTarget, targetScore, TARGETING } from '../dist/sim/targeting.js';
 import { CLASSES, CLASS_ORDER, classDps, weaponRange } from '../dist/sim/classes.js';
 import { Pool } from '../dist/render/pool.js';
 import { fadeOut } from '../dist/render/lerp.js';
+import { CHANNEL_REFERENCE, channelGain, volumeCurve } from '../dist/audio/volume.js';
+import { DEFAULT_SETTINGS, RANGES } from '../dist/input/settings.js';
 
 const { check, finish } = reporter('GLITCHBURST — simulation & codec');
 
@@ -324,6 +326,43 @@ const run = (engine, seconds, t = targets(1)) => {
     .map((l) => fadeOut(l, 0.3))
     .every((v, i, a) => i === 0 || v <= a[i - 1]));
   check('a zero lifetime cannot divide by zero', fadeOut(1, 0) === 1);
+}
+
+/* ---------------------------------------------------------- audio volume */
+
+{
+  check('a full slider is the channel reference level',
+    channelGain(1, CHANNEL_REFERENCE.sfx) === CHANNEL_REFERENCE.sfx);
+  check('a zero slider is silence', channelGain(0, CHANNEL_REFERENCE.music) === 0);
+  check('music sits under the effects at equal slider positions',
+    channelGain(1, CHANNEL_REFERENCE.music) < channelGain(1, CHANNEL_REFERENCE.sfx),
+    `music ${CHANNEL_REFERENCE.music} vs sfx ${CHANNEL_REFERENCE.sfx}`);
+
+  // A linear slider spends its bottom quarter going silent-to-loud, so the
+  // curve has to put the half-way point well below half gain or the top half
+  // of the track does nothing audible.
+  const halfDb = 20 * Math.log10(volumeCurve(0.5));
+  check('half travel lands around -12 dB, not -6', halfDb < -10 && halfDb > -14,
+    `${halfDb.toFixed(1)} dB at 50%`);
+
+  check('the curve is monotonic across the track',
+    Array.from({ length: 21 }, (_, i) => volumeCurve(i / 20))
+      .every((v, i, a) => i === 0 || v > a[i - 1]));
+
+  check('out-of-range positions cannot produce a negative or runaway gain',
+    volumeCurve(-5) === 0 && volumeCurve(9) === 1 && volumeCurve(Number.NaN) >= 0);
+
+  // The store clamps stored values to these bounds and the UI builds its range
+  // inputs from the same table, so a mismatch here is a slider that can set a
+  // value the store will immediately overwrite.
+  check('every numeric setting declares a range that contains its default',
+    Object.entries(RANGES).every(([key, { min, max }]) => {
+      const value = DEFAULT_SETTINGS[key];
+      return typeof value === 'number' && value >= min && value <= max;
+    }),
+    Object.keys(RANGES).join(', '));
+
+  check('both audio channels default to full', DEFAULT_SETTINGS.sfxVolume === 1 && DEFAULT_SETTINGS.musicVolume === 1);
 }
 
 /* ----------------------------------------------------------------- pool */

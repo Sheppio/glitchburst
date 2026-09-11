@@ -10,13 +10,16 @@
  * give us a context, or an effect that throws mid-frame, must never take the
  * game down with it.
  */
+import { CHANNEL_REFERENCE, channelGain } from './volume.js';
+
 export type AudioChannel = 'sfx' | 'music';
 
 export class AudioBus {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
   private gains: Record<AudioChannel, GainNode | null> = { sfx: null, music: null };
-  private enabled: Record<AudioChannel, boolean> = { sfx: true, music: true };
+  /** Slider positions, 0–1. Zero is mute — see `destination`. */
+  private volumes: Record<AudioChannel, number> = { sfx: 1, music: 1 };
   /** Last play time per throttle key, to stop a sound stacking on itself. */
   private lastPlayed = new Map<string, number>();
 
@@ -54,7 +57,7 @@ export class AudioBus {
 
         for (const channel of ['sfx', 'music'] as const) {
           const gain = this.ctx.createGain();
-          gain.gain.value = this.enabled[channel] ? this.levelFor(channel) : 0;
+          gain.gain.value = this.gainFor(channel);
           gain.connect(this.master);
           this.gains[channel] = gain;
         }
@@ -67,23 +70,36 @@ export class AudioBus {
     }
   }
 
-  setEnabled(channel: AudioChannel, on: boolean): void {
-    this.enabled[channel] = on;
+  /**
+   * Set a channel's level, 0–1.
+   *
+   * Called on every `input` event while a slider is dragged, so it has to be
+   * cheap and it has to ramp: a hard gain change on a running oscillator clicks
+   * audibly, and a drag would otherwise crackle the whole way down.
+   */
+  setVolume(channel: AudioChannel, volume: number): void {
+    this.volumes[channel] = !Number.isFinite(volume) ? 0 : volume < 0 ? 0 : volume > 1 ? 1 : volume;
     const gain = this.gains[channel];
     if (!gain || !this.ctx) return;
-    // Ramp rather than jump: a hard gain change on a running oscillator clicks.
-    const target = on ? this.levelFor(channel) : 0;
     gain.gain.cancelScheduledValues(this.ctx.currentTime);
-    gain.gain.setTargetAtTime(target, this.ctx.currentTime, 0.02);
+    gain.gain.setTargetAtTime(this.gainFor(channel), this.ctx.currentTime, 0.02);
+  }
+
+  volumeOf(channel: AudioChannel): number {
+    return this.volumes[channel];
   }
 
   isEnabled(channel: AudioChannel): boolean {
-    return this.enabled[channel];
+    return this.volumes[channel] > 0;
   }
 
-  /** The node effects should connect to. Null when audio is unavailable or off. */
+  /**
+   * The node effects should connect to. Null when audio is unavailable or the
+   * channel is at zero — a muted channel should build no oscillators at all,
+   * not build them and multiply them by zero.
+   */
   destination(channel: AudioChannel): GainNode | null {
-    if (!this.ready || !this.enabled[channel]) return null;
+    if (!this.ready || this.volumes[channel] <= 0) return null;
     return this.gains[channel];
   }
 
@@ -106,8 +122,7 @@ export class AudioBus {
     void this.ctx?.suspend().catch(() => undefined);
   }
 
-  private levelFor(channel: AudioChannel): number {
-    // Music sits well under the effects; it is a bed, not a feature.
-    return channel === 'music' ? 0.32 : 0.9;
+  private gainFor(channel: AudioChannel): number {
+    return channelGain(this.volumes[channel], CHANNEL_REFERENCE[channel]);
   }
 }

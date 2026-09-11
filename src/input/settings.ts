@@ -17,11 +17,19 @@ export interface InputSettings {
   /** Left-handed layout: swaps the movement and aim zones on touch. */
   southpaw: boolean;
   vibration: boolean;
-  /** Weapon, impact and pickup effects. */
-  sfx: boolean;
-  /** Background music. */
-  music: boolean;
+  /** Weapon, impact and pickup effects, 0–1. Zero is mute. */
+  sfxVolume: number;
+  /** Background music, 0–1. Zero is mute, and stops the scheduler entirely. */
+  musicVolume: number;
 }
+
+/** Numeric settings and the range each is clamped to when read back. */
+export const RANGES = {
+  autoAimRange: { min: 200, max: 1200 },
+  deadzone: { min: 0.15, max: 0.45 },
+  sfxVolume: { min: 0, max: 1 },
+  musicVolume: { min: 0, max: 1 },
+} as const satisfies Record<string, { min: number; max: number }>;
 
 const STORAGE_KEY = 'glitchburst.input.v1';
 
@@ -33,8 +41,8 @@ export const DEFAULT_SETTINGS: InputSettings = {
   forceTouchControls: false,
   southpaw: false,
   vibration: true,
-  sfx: true,
-  music: true,
+  sfxVolume: 1,
+  musicVolume: 1,
 };
 
 export interface SettingsEvents extends Record<string, unknown> {
@@ -54,7 +62,7 @@ export class SettingsStore {
   private state: InputSettings;
 
   constructor() {
-    this.state = { ...DEFAULT_SETTINGS, ...detectDefaults(), ...load() };
+    this.state = coerce({ ...DEFAULT_SETTINGS, ...detectDefaults(), ...load() });
   }
 
   get current(): Readonly<InputSettings> {
@@ -68,7 +76,7 @@ export class SettingsStore {
     this.events.emit('change', { settings: this.state });
   }
 
-  toggle(key: 'autoFire' | 'autoAim' | 'forceTouchControls' | 'southpaw' | 'vibration' | 'sfx' | 'music'): void {
+  toggle(key: 'autoFire' | 'autoAim' | 'forceTouchControls' | 'southpaw' | 'vibration'): void {
     this.set(key, !this.state[key]);
   }
 }
@@ -82,11 +90,50 @@ function detectDefaults(): Partial<InputSettings> {
 function load(): Partial<InputSettings> {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as Partial<InputSettings>) : {};
+    return raw ? migrate(JSON.parse(raw) as Record<string, unknown>) : {};
   } catch {
     // Private browsing, or storage disabled. Defaults are a fine answer.
     return {};
   }
+}
+
+/**
+ * Bring a stored blob up to the current shape.
+ *
+ * Audio used to be a pair of on/off switches, so anyone who has played before
+ * has `sfx: true` sitting in their storage. Reading that as a volume would be a
+ * type error at best and a silently muted game at worst, so the old keys are
+ * folded into the new ones and dropped. The storage key is deliberately *not*
+ * bumped: a new key would be simpler but would also throw away the player's
+ * callsign-adjacent preferences — deadzone, southpaw, assists — to fix audio.
+ */
+function migrate(raw: Record<string, unknown>): Partial<InputSettings> {
+  const out = { ...raw };
+  for (const [legacy, key] of [['sfx', 'sfxVolume'], ['music', 'musicVolume']] as const) {
+    if (typeof out[legacy] === 'boolean') {
+      if (out[key] === undefined) out[key] = out[legacy] ? 1 : 0;
+      delete out[legacy];
+    }
+  }
+  return out as Partial<InputSettings>;
+}
+
+/**
+ * Clamp the numeric settings into their declared ranges.
+ *
+ * Storage outlives code and is trivially hand-editable, and these numbers now
+ * reach a gain node and a deadzone divisor. A stray `NaN` here has already cost
+ * us a day once (see the deadzone divide-by-zero), so nothing numeric leaves
+ * this function unchecked.
+ */
+function coerce(state: InputSettings): InputSettings {
+  const out = { ...state };
+  for (const key of Object.keys(RANGES) as (keyof typeof RANGES)[]) {
+    const { min, max } = RANGES[key];
+    const value = Number(out[key]);
+    out[key] = !Number.isFinite(value) ? DEFAULT_SETTINGS[key] : value < min ? min : value > max ? max : value;
+  }
+  return out;
 }
 
 function save(settings: InputSettings): void {

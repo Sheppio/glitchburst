@@ -1,8 +1,22 @@
+/**
+ * Web Audio plumbing: one context, three gain stages, and the unlock dance.
+ *
+ * Sound is *synthesised* rather than loaded, for the same reason every texture
+ * is drawn at boot: the game ships as a handful of static files with no assets
+ * to fetch, no CORS surface and no loading screen. It also happens to suit the
+ * setting — a mainframe should bleep, not play recorded gunfire.
+ *
+ * Every entry point is defensive. Audio is a garnish: a browser that refuses to
+ * give us a context, or an effect that throws mid-frame, must never take the
+ * game down with it.
+ */
+import { CHANNEL_REFERENCE, channelGain } from './volume.js';
 export class AudioBus {
     ctx = null;
     master = null;
     gains = { sfx: null, music: null };
-    enabled = { sfx: true, music: true };
+    /** Slider positions, 0–1. Zero is mute — see `destination`. */
+    volumes = { sfx: 1, music: 1 };
     /** Last play time per throttle key, to stop a sound stacking on itself. */
     lastPlayed = new Map();
     get context() {
@@ -35,7 +49,7 @@ export class AudioBus {
                 this.master.connect(this.ctx.destination);
                 for (const channel of ['sfx', 'music']) {
                     const gain = this.ctx.createGain();
-                    gain.gain.value = this.enabled[channel] ? this.levelFor(channel) : 0;
+                    gain.gain.value = this.gainFor(channel);
                     gain.connect(this.master);
                     this.gains[channel] = gain;
                 }
@@ -48,22 +62,34 @@ export class AudioBus {
             this.ctx = null;
         }
     }
-    setEnabled(channel, on) {
-        this.enabled[channel] = on;
+    /**
+     * Set a channel's level, 0–1.
+     *
+     * Called on every `input` event while a slider is dragged, so it has to be
+     * cheap and it has to ramp: a hard gain change on a running oscillator clicks
+     * audibly, and a drag would otherwise crackle the whole way down.
+     */
+    setVolume(channel, volume) {
+        this.volumes[channel] = !Number.isFinite(volume) ? 0 : volume < 0 ? 0 : volume > 1 ? 1 : volume;
         const gain = this.gains[channel];
         if (!gain || !this.ctx)
             return;
-        // Ramp rather than jump: a hard gain change on a running oscillator clicks.
-        const target = on ? this.levelFor(channel) : 0;
         gain.gain.cancelScheduledValues(this.ctx.currentTime);
-        gain.gain.setTargetAtTime(target, this.ctx.currentTime, 0.02);
+        gain.gain.setTargetAtTime(this.gainFor(channel), this.ctx.currentTime, 0.02);
+    }
+    volumeOf(channel) {
+        return this.volumes[channel];
     }
     isEnabled(channel) {
-        return this.enabled[channel];
+        return this.volumes[channel] > 0;
     }
-    /** The node effects should connect to. Null when audio is unavailable or off. */
+    /**
+     * The node effects should connect to. Null when audio is unavailable or the
+     * channel is at zero — a muted channel should build no oscillators at all,
+     * not build them and multiply them by zero.
+     */
     destination(channel) {
-        if (!this.ready || !this.enabled[channel])
+        if (!this.ready || this.volumes[channel] <= 0)
             return null;
         return this.gains[channel];
     }
@@ -85,9 +111,8 @@ export class AudioBus {
     suspend() {
         void this.ctx?.suspend().catch(() => undefined);
     }
-    levelFor(channel) {
-        // Music sits well under the effects; it is a bed, not a feature.
-        return channel === 'music' ? 0.32 : 0.9;
+    gainFor(channel) {
+        return channelGain(this.volumes[channel], CHANNEL_REFERENCE[channel]);
     }
 }
 //# sourceMappingURL=AudioBus.js.map
