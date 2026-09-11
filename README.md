@@ -1,6 +1,6 @@
 # GLITCHBURST
 
-<!-- version -->**v0.2.16**<!-- /version --> — the build currently on Pages.
+<!-- version -->**v0.2.17**<!-- /version --> — the build currently on Pages.
 
 A co-op top-down horde shooter that runs entirely in the browser. **No game server.**
 Every client talks to a public MQTT broker over WebSockets, and one of them
@@ -38,7 +38,7 @@ Developing needs the compiler:
 ```bash
 npm install
 npm run watch      # tsc --watch, rebuilding dist/ on save
-npm test           # 261 tests: simulation, codec, single client, mobile, controller, two clients
+npm test           # 269 tests: simulation, codec, single client, mobile, controller, two clients
 ```
 
 `dist/` is committed on purpose — it is what GitHub Pages serves.
@@ -216,6 +216,15 @@ is useless exactly when the ability matters, since no plausible factor makes a
 decoy 700px away beat a player the enemy is already touching.
 
 ### Reading the fight
+
+Squad health bars are listed **you first, then the host, then join order**.
+Your own bar is the one you glance at mid-fight, so it holds still at the top
+rather than shuffling as people come and go; the host is next because theirs is
+the connection the whole room's horde depends on. Join order for the rest comes
+free from the player ids, which are time-prefixed — the same property the host
+election relies on. Insertion order into the remotes map would have been
+"whoever's first packet arrived", which is stable enough to look deliberate and
+arbitrary enough to differ between two clients looking at the same room.
 
 Enemy health bars appear **only once an enemy has been damaged**. A bar over
 every enemy would be noise — at the cap that is a hundred of them — and the
@@ -637,11 +646,11 @@ for a game — just don't build anything that needs privacy on top of it.
 npm test
 ```
 
-261 checks across five suites. The browser suites vendor Phaser locally and
+269 checks across five suites. The browser suites vendor Phaser locally and
 swap MQTT for a loopback stub that relays over `BroadcastChannel`, so two tabs
 share one "broker" and a real multi-client room can be tested offline.
 
-- **`sim.test.mjs`** (159) — codec round-trips, truncation tolerance, payload
+- **`sim.test.mjs`** (167) — codec round-trips, truncation tolerance, payload
   size at the cap, enemy cap, difficulty scaling, wave pacing, damage
   attribution, steering, decoy priority, host adoption, shockwave, progression
   and upgrade caps, deterministic drop rolls, turn-rate limiting, the auto-aim

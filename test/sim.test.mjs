@@ -22,6 +22,7 @@ import { autopilotMove, AUTOPILOT } from '../dist/sim/autopilot.js';
 import { CLASSES, CLASS_ORDER, classDps, weaponRange } from '../dist/sim/classes.js';
 import { Pool } from '../dist/render/pool.js';
 import { fadeOut } from '../dist/render/lerp.js';
+import { orderSquad } from '../dist/render/squadOrder.js';
 import { CHANNEL_REFERENCE, channelGain, volumeCurve } from '../dist/audio/volume.js';
 import { DEFAULT_SETTINGS, RANGES } from '../dist/input/settings.js';
 
@@ -365,6 +366,42 @@ const run = (engine, seconds, t = targets(1)) => {
     .map((l) => fadeOut(l, 0.3))
     .every((v, i, a) => i === 0 || v <= a[i - 1]));
   check('a zero lifetime cannot divide by zero', fadeOut(1, 0) === 1);
+}
+
+/* ----------------------------------------------------------- squad order */
+
+{
+  // Ids are time-prefixed, so id order *is* join order — the same property the
+  // host election relies on.
+  const roster = [
+    { id: '0m3', isSelf: false, isHost: false },
+    { id: '0m1', isSelf: false, isHost: true },
+    { id: '0m4', isSelf: true, isHost: false },
+    { id: '0m2', isSelf: false, isHost: false },
+  ];
+  const ids = orderSquad(roster).map((m) => m.id);
+  check('you are always at the top', ids[0] === '0m4');
+  check('the host comes next', ids[1] === '0m1');
+  check('everyone else follows in join order', ids.slice(2).join() === '0m2,0m3', ids.join(' → '));
+
+  const hosting = orderSquad([
+    { id: '0m2', isSelf: false, isHost: false },
+    { id: '0m1', isSelf: true, isHost: true },
+  ]).map((m) => m.id);
+  check('hosting yourself does not leave a gap at the top', hosting.join() === '0m1,0m2');
+
+  check('a solo roster is untouched', orderSquad([{ id: 'x', isSelf: true, isHost: true }]).length === 1);
+  check('an empty roster is fine', orderSquad([]).length === 0);
+
+  // Every client sorts the same roster into the same order, which is the point:
+  // two players comparing screens should see the same list.
+  const shuffled = [...roster].reverse();
+  check('the order does not depend on the order it was built in',
+    orderSquad(shuffled).map((m) => m.id).join() === ids.join());
+
+  const original = [...roster];
+  orderSquad(roster);
+  check('the caller\'s array is left alone', roster.map((m) => m.id).join() === original.map((m) => m.id).join());
 }
 
 /* ------------------------------------------------------------- autopilot */

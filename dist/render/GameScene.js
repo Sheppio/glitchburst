@@ -15,6 +15,7 @@ import { approachAngle, clamp, counterId, dist2, lerpAngle, segmentDist2 } from 
 import { DAMAGE_RED, Fx } from './fx.js';
 import { fadeOut, glide, smoothing } from './lerp.js';
 import { Pool } from './pool.js';
+import { orderSquad } from './squadOrder.js';
 import { ProgressionSystem } from './Progression.js';
 import { TEX } from './textures.js';
 /**
@@ -1397,7 +1398,7 @@ export class GameScene extends Phaser.Scene {
             paused: this.paused,
             pausedBy: this.pausedBy,
             canPause: this.cfg.room.isHost,
-            squad,
+            squad: orderSquad(squad),
         });
     }
     /* ---------------------------------------------------------------- arena */
