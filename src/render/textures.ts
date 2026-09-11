@@ -545,6 +545,19 @@ function drawGlyph(g: Phaser.GameObjects.Graphics, c: number, m: number, id: str
     g.fillRect(c - 7, m + 1, 3.5, 6);
     g.fillRect(c - 1.75, m - 3, 3.5, 10);
     g.fillRect(c + 3.5, m - 7, 3.5, 14);
+  } else if (id === 'vitality') {
+    // Shield. A cross would be the obvious mark for health, but Self Repair
+    // already owns it, and two upgrades wearing the same glyph is worse than
+    // either wearing a less obvious one. A shield reads as capacity to take a
+    // hit rather than as recovery from one, which is the difference.
+    g.beginPath();
+    g.moveTo(c - 7.5, m - 7.5);
+    g.lineTo(c + 7.5, m - 7.5);
+    g.lineTo(c + 7.5, m + 1.5);
+    g.lineTo(c, m + 8.5);
+    g.lineTo(c - 7.5, m + 1.5);
+    g.closePath();
+    g.fillPath();
   } else if (id === 'regen') {
     // Cross — the one glyph everybody already knows means health.
     g.fillRect(c - 2.4, m - 8, 4.8, 16);

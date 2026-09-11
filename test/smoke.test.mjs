@@ -15,6 +15,7 @@ const EFFECT_OF = {
   speed: 'speedMultiplier',
   firerate: 'fireIntervalMultiplier',
   regen: 'bonusRegenPerSec',
+  vitality: 'maxHealth',
 };
 
 await buildRig();
@@ -847,6 +848,51 @@ await step('collecting a power-up upgrades the player', async () => {
   return { ok: out.ok, note: out.ok ? `gained a ${out.gained} stack — ${out.effect} now ${out.value}` : out.why };
 });
 
+await step('heap expansion raises the live maximum and arrives filled', async () => {
+  const out = await page.evaluate(async ({ ceiling, step }) => {
+    const scene = window.glitchburst.game.scene.getScene('game');
+    const progress = scene.progression.progress;
+    clearInterval(window.__keepAlive);
+
+    // Hurt, so the top-up is measurable. A power-up that hands you headroom you
+    // then have to earn back is felt as nothing at the moment you take it.
+    scene.me.hp = 30;
+    scene.sinceDamage = 0;
+    const before = { hp: scene.me.hp, max: scene.me.maxHp, base: progress.baseMaxHp };
+
+    progress.grant('vitality');
+    await new Promise((r) => requestAnimationFrame(r));
+    await new Promise((r) => requestAnimationFrame(r));
+    const after = { hp: scene.me.hp, max: scene.me.maxHp };
+
+    // Past the ceiling, whatever the stack count says.
+    for (let i = 0; i < 40; i++) progress.grant('vitality');
+    await new Promise((r) => requestAnimationFrame(r));
+    await new Promise((r) => requestAnimationFrame(r));
+    const capped = { max: scene.me.maxHp, stacks: progress.stacks.vitality };
+
+    // A reboot must not hand back the old class maximum.
+    scene.respawn();
+    const rebooted = { hp: scene.me.hp, max: scene.me.maxHp };
+
+    window.__keepAlive = setInterval(() => { scene.me.hp = scene.me.maxHp; }, 100);
+    return { before, after, capped, rebooted, ceiling, step };
+  }, { ceiling: 256, step: 16 });
+
+  const ok =
+    out.after.max === out.before.max + out.step &&
+    out.after.hp === out.before.hp + out.step &&
+    out.capped.max === out.ceiling &&
+    out.rebooted.max === out.ceiling &&
+    out.rebooted.hp === out.ceiling;
+
+  return {
+    ok,
+    note: `${out.before.max} → ${out.after.max} max (hp ${out.before.hp} → ${out.after.hp}), ` +
+      `${out.capped.stacks} stacks capped at ${out.capped.max}, reboot at ${out.rebooted.hp}/${out.rebooted.max}`,
+  };
+});
+
 await step('the player turns at a limited rate instead of snapping', async () => {
   const out = await page.evaluate(async () => {
     const scene = window.glitchburst.game.scene.getScene('game');
@@ -1281,6 +1327,7 @@ await step('the staging area edits the callsign and cycles the program', async (
     name: document.querySelector('.roster-name')?.textContent,
     cls: document.querySelector('.roster-class')?.textContent,
     program: document.getElementById('select-lobby-class').value,
+    icon: document.querySelector('.roster-icon svg')?.innerHTML,
   }));
 
   await page.fill('#input-lobby-callsign', 'REWIRED');
@@ -1306,6 +1353,12 @@ await step('the staging area edits the callsign and cycles the program', async (
     // choice; they must not drift apart.
     mirrored: document.getElementById('input-callsign').value,
     card: document.querySelector('.class-card[aria-pressed="true"]')?.dataset.cls,
+    // The glyph is how you tell programs apart at a glance, so it has to
+    // follow the program rather than being drawn once and left there.
+    icon: document.querySelector('.roster-icon svg')?.innerHTML,
+    iconColour: document.querySelector('.roster-icon')
+      ? getComputedStyle(document.querySelector('.roster-icon')).color
+      : null,
     stored: localStorage.getItem('glitchburst.callsign'),
     storedClass: localStorage.getItem('glitchburst.class'),
   }));
@@ -1328,6 +1381,9 @@ await step('the staging area edits the callsign and cycles the program', async (
     after.cls !== before.cls &&
     after.mirrored === 'REWIRED' &&
     after.card === picked &&
+    Boolean(before.icon) &&
+    after.icon !== before.icon &&
+    after.iconColour !== 'rgb(0, 0, 0)' &&
     after.stored === 'REWIRED' &&
     after.storedClass === picked &&
     run.cls === picked &&
@@ -1335,7 +1391,9 @@ await step('the staging area edits the callsign and cycles the program', async (
 
   return {
     ok,
-    note: `${before.name} → ${after.name}, ${before.cls} → ${after.cls}; run deployed as ${run.cls}/${run.name} (wanted ${picked}/REWIRED)`,
+    note: `${before.name} → ${after.name}, ${before.cls} → ${after.cls}, glyph ${
+      before.icon === after.icon ? 'UNCHANGED' : 'redrawn'} in ${after.iconColour}; ` +
+      `run deployed as ${run.cls}/${run.name} (wanted ${picked}/REWIRED)`,
   };
 });
 

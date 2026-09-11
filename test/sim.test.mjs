@@ -23,6 +23,7 @@ import { CLASSES, CLASS_ORDER, classDps, weaponRange } from '../dist/sim/classes
 import { Pool } from '../dist/render/pool.js';
 import { fadeOut } from '../dist/render/lerp.js';
 import { orderSquad } from '../dist/render/squadOrder.js';
+import { classIconSvg } from '../dist/ui/classIcon.js';
 import { edgeMarker } from '../dist/render/edgeMarkers.js';
 import {
   accuracy, EMPTY_PLAYER_STATS, formatDuration, summaryRows, sumPlayerStats,
@@ -266,23 +267,80 @@ const run = (engine, seconds, t = targets(1)) => {
 {
   // Exactly one upgrade is endless. That is the whole answer to "I reach fully
   // optimised too soon": there is no such state to reach any more.
-  const endless = UPGRADE_ORDER.filter((id) => !Number.isFinite(UPGRADES[id].maxStacks));
+  //
+  // Two upgrades carry an infinite *stack* count; only one of them is actually
+  // unbounded. Heap Expansion is bounded by the health ceiling instead, because
+  // the classes do not start level and a stack cap would mean something
+  // different to each of them — so `isMaxed` is the honest question, not the
+  // number in the table.
+  const p = new PlayerProgress();
+  const endless = UPGRADE_ORDER.filter((id) => {
+    const fresh = new PlayerProgress();
+    for (let i = 0; i < 500; i++) fresh.grant(id);
+    return !fresh.isMaxed(id);
+  });
   check('damage is the endless upgrade', endless.length === 1 && endless[0] === 'damage',
     endless.length ? `endless: ${endless.join(', ')}` : 'every upgrade is capped');
 
-  const p = new PlayerProgress();
   // Drive from the table, not a hand-written list, or adding an upgrade
   // silently stops this testing what it claims to.
   for (const id of UPGRADE_ORDER) {
     const cap = UPGRADES[id].maxStacks;
     for (let i = 0; i < (Number.isFinite(cap) ? cap : 400); i++) p.grant(id);
   }
-  check('every capped upgrade still stops', UPGRADE_ORDER.every((id) =>
-    Number.isFinite(UPGRADES[id].maxStacks) ? p.grant(id) === false : p.grant(id) === true));
+  check('every bounded upgrade still stops', UPGRADE_ORDER.every((id) =>
+    id === 'damage' ? p.grant(id) === true : p.grant(id) === false),
+    UPGRADE_ORDER.filter((id) => id !== 'damage' && !p.isMaxed(id)).join(', ') || 'all bounded');
   check('a maxed-out player still has something to roll', p.rollUpgrade() === 'damage',
     'only damage remains, forever');
   check('damage keeps stacking well past every other cap', p.stacks.damage > 400,
     `${p.stacks.damage} damage stacks and counting`);
+}
+
+{
+  /* ----------------------------------------------- heap expansion (max hp) */
+
+  const step = UPGRADES.vitality.step;
+  const glass = new PlayerProgress(90);     // Glitcher
+  const tank = new PlayerProgress(190);     // Fireman
+
+  check('a fresh player has exactly their class maximum',
+    glass.maxHealth === 90 && tank.maxHealth === 190);
+
+  glass.grant('vitality');
+  check('one stack adds a flat amount, not a percentage',
+    glass.maxHealth === 90 + step, `${glass.maxHealth} hp`);
+
+  // The ceiling is on the stat, not the stack count — which is the whole point
+  // of expressing it that way, since the two classes start a hundred apart.
+  for (let i = 0; i < 40; i++) glass.grant('vitality');
+  for (let i = 0; i < 40; i++) tank.grant('vitality');
+  check('neither class can climb past the ceiling',
+    glass.maxHealth === PROGRESSION.healthCeiling && tank.maxHealth === PROGRESSION.healthCeiling,
+    `glitcher ${glass.maxHealth}, fireman ${tank.maxHealth}, ceiling ${PROGRESSION.healthCeiling}`);
+  check('the ceiling is 256', PROGRESSION.healthCeiling === 256);
+
+  // The upgrade is worth most to whoever needs it most: the glass cannon gets
+  // a run-defining number of stacks, the tank a handful.
+  check('the low-health class has far more to gain',
+    glass.stacks.vitality > tank.stacks.vitality * 2,
+    `${glass.stacks.vitality} stacks vs ${tank.stacks.vitality}`);
+
+  check('a player at the ceiling is maxed', glass.isMaxed('vitality') && tank.isMaxed('vitality'));
+  check('and is never offered it again',
+    Array.from({ length: 200 }, () => glass.rollUpgrade()).every((id) => id !== 'vitality'));
+
+  // The stack that crosses the ceiling is allowed and simply gives what is
+  // left. Refusing it would be a power-up that fires its sound and does
+  // nothing, which reads as a bug.
+  const edge = new PlayerProgress(PROGRESSION.healthCeiling - 3);
+  check('the last stack is partial rather than refused',
+    edge.grant('vitality') === true && edge.maxHealth === PROGRESSION.healthCeiling,
+    `${edge.maxHealth} hp from a ${step} point stack with 3 to spare`);
+  check('and there is nothing after it', edge.grant('vitality') === false);
+
+  check('a class at the ceiling is offered nothing at all',
+    new PlayerProgress(PROGRESSION.healthCeiling).isMaxed('vitality'));
 }
 
 {
@@ -510,6 +568,25 @@ const run = (engine, seconds, t = targets(1)) => {
   const original = [...roster];
   orderSquad(roster);
   check('the caller\'s array is left alone', roster.map((m) => m.id).join() === original.map((m) => m.id).join());
+}
+
+/* ------------------------------------------------------------ class icons */
+
+{
+  // The in-game chassis is the same drawing for every class — only the colour
+  // and radius differ — so a roster of four programs needs marks of its own.
+  const svgs = CLASS_ORDER.map((id) => classIconSvg(id));
+
+  check('every class has a glyph', svgs.every((s) => s.startsWith('<svg') && s.includes('</svg>')));
+  check('no two classes share a glyph', new Set(svgs).size === CLASS_ORDER.length,
+    `${new Set(svgs).size} distinct marks for ${CLASS_ORDER.length} classes`);
+  // The row already names the class in text beside the glyph; announcing both
+  // reads the same thing twice.
+  check('glyphs are decorative', svgs.every((s) => s.includes('aria-hidden="true"')));
+  // Colour lives on the row, which paints its border from the same value. A
+  // second copy baked into the markup is the copy that goes stale.
+  check('glyphs inherit their colour rather than carrying one',
+    svgs.every((s) => s.includes('stroke="currentColor"') && !s.includes('#')));
 }
 
 /* ------------------------------------------------------------- autopilot */

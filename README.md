@@ -1,6 +1,6 @@
 # GLITCHBURST
 
-<!-- version -->**v0.2.22**<!-- /version --> — the build currently on Pages.
+<!-- version -->**v0.2.23**<!-- /version --> — the build currently on Pages.
 
 A co-op top-down horde shooter that runs entirely in the browser. **No game server.**
 Every client talks to a public MQTT broker over WebSockets, and one of them
@@ -38,7 +38,7 @@ Developing needs the compiler:
 ```bash
 npm install
 npm run watch      # tsc --watch, rebuilding dist/ on save
-npm test           # 324 tests: simulation, codec, single client, mobile, controller, two clients
+npm test           # 339 tests: simulation, codec, single client, mobile, controller, two clients
 ```
 
 `dist/` is committed on purpose — it is what GitHub Pages serves.
@@ -347,9 +347,24 @@ plateau the rising price exists to remove.
 | **Pipeline Boost** (fire rate) | +5.5% | 16 | Fire rate multiplies *live bullets* — the one per-frame cost that scales with an upgrade rather than with the horde. |
 | **Clock Boost** (speed) | +4.5% | 12 | Movement speed changes what the collision code has to cope with. Enough of it and a player crosses more than an enemy radius per frame, which is the tunnelling bug bullets already needed swept collision to fix. |
 | **Self Repair** (regen) | +0.55 hp/s | 12 | Regeneration that outpaces incoming damage removes the fail state, and a horde shooter with no fail state is a screensaver. |
+| **Heap Expansion** (max hp) | +16 hp | **256 total** | Capped on the *stat*, not the stack count — see below. |
+
+**Heap Expansion is bounded by a ceiling rather than a stack cap**, because the
+classes do not start level: the same four stacks take the Glitcher from 90 to
+154 and the Fireman from 190 to 254. A stack cap would be generous to the tank
+and nearly meaningless to the glass cannon. A ceiling of **256** instead leaves
+the Fireman a modest four stacks and the Glitcher a run-defining ten, so the
+upgrade is worth most to whoever needs it most.
+
+The stack that crosses the ceiling is allowed and simply gives what is left,
+rather than being refused — a power-up that announces itself, plays its sound
+and does nothing reads as a bug. Past that point the roll stops offering it.
+The extra capacity also arrives **filled**: headroom you have to earn back is
+felt as nothing at the moment you take it, and this is the one upgrade whose
+job is to save your life.
 
 Damage being endless is the answer to "I reach fully optimised too soon": there
-is no such state to reach. Once the three capped lines are full every power-up
+is no such state to reach. Once the four bounded lines are full every power-up
 is damage, forever, at a price that keeps climbing.
 
 Rolls are weighted toward whatever you have least of, so a long run broadens a
@@ -410,7 +425,18 @@ presence, and a player who changes program and still sees their old one on the
 squad list will reasonably conclude it did not work.
 
 Both the character screen's card grid and the staging area's picker write
-through one selection, so they cannot drift apart. The picker is a `select`
+through one selection, so they cannot drift apart.
+
+Each roster row carries its **class glyph**. The in-game chassis cannot be
+reused for this: every class draws the same sprite and differs only in colour
+and radius, which is fine at arm's length in a moving arena and useless in a
+list of four programs. So each class gets a mark built from the one thing the
+sprite does establish — a disc inside a coloured ring — with its behaviour drawn
+inside: a beam leaving the muzzle and running off the edge for the Overclocker,
+three rays off the same muzzle for the Fireman, a second ring offset behind the
+first for the Glitcher's decoy, a cross inside the ring for the Encoder's field.
+Everything is stroked in `currentColor`, so the row sets the colour once and the
+glyph inherits it. The picker is a `select`
 cycled **in place** by the pad: a native dropdown is drawn by the browser
 chrome, where a controller cannot reach, and opening one on a console is a dead
 end with no way back.
@@ -783,18 +809,18 @@ for a game — just don't build anything that needs privacy on top of it.
 npm test
 ```
 
-324 checks across five suites. The browser suites vendor Phaser locally and
+339 checks across five suites. The browser suites vendor Phaser locally and
 swap MQTT for a loopback stub that relays over `BroadcastChannel`, so two tabs
 share one "broker" and a real multi-client room can be tested offline.
 
-- **`sim.test.mjs`** (207) — codec round-trips, truncation tolerance, payload
+- **`sim.test.mjs`** (221) — codec round-trips, truncation tolerance, payload
   size at the cap, enemy cap, difficulty scaling, wave pacing, damage
   attribution, steering, decoy priority, host adoption, shockwave, progression
   and upgrade caps, deterministic drop rolls, turn-rate limiting, the auto-aim
   scoring formula, enemy levels and their health/reward curves, wave streaming
   and the tempo floor, the autopilot's steering bands and its survival against a
   live horde, and the audio volume curve.
-- **`smoke.test.mjs`** (47) — menus, settings persistence and migration, Phaser
+- **`smoke.test.mjs`** (48) — menus, settings persistence and migration, Phaser
   boot, election, 20 Hz batching, attacker-authority kills, point-blank hits,
   chip pickup and conversion, turn rate, abilities, pause, settings over a live
   match, and broadcast rate under a starved renderer.

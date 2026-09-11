@@ -63,6 +63,8 @@ export interface ProgressionHost {
   readonly scene: Phaser.Scene;
   readonly fx: Fx;
   readonly sfx: Sfx;
+  /** The class's own maximum health, which Heap Expansion builds on. */
+  readonly baseMaxHp: number;
   collector(): Collector;
   banner(text: string, sub?: string): void;
   rumble(weak: number, strong: number, durationMs: number): void;
@@ -78,12 +80,14 @@ export interface ProgressionHost {
  */
 export class ProgressionSystem {
   /** This player's run progress. Never leaves the client. */
-  readonly progress = new PlayerProgress();
+  readonly progress: PlayerProgress;
 
   readonly chips: Pool<Chip>;
   readonly powerUps: Pool<PowerUp>;
 
   constructor(private readonly host: ProgressionHost) {
+    this.progress = new PlayerProgress(host.baseMaxHp);
+
     this.chips = new Pool<Chip>(() => ({
       sprite: host.scene.add.image(0, 0, TEX.chip).setDepth(12),
       x: 0, y: 0, vx: 0, vy: 0, homing: false, speed: 0, ttl: 0, active: false,

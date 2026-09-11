@@ -197,6 +197,7 @@ export class GameScene extends Phaser.Scene {
             scene: this,
             fx: this.fx,
             sfx: this.cfg.sfx,
+            baseMaxHp: this.def.maxHp,
             collector: () => ({
                 x: this.me.x,
                 y: this.me.y,
@@ -334,6 +335,7 @@ export class GameScene extends Phaser.Scene {
     /* ------------------------------------------------------------ local play */
     updateLocalPlayer(dt) {
         const { input } = this.cfg;
+        this.syncMaxHealth();
         const cam = this.cameras.main;
         const screen = {
             x: (this.me.x - cam.worldView.x) * cam.zoom,
@@ -386,6 +388,27 @@ export class GameScene extends Phaser.Scene {
         this.me.flags =
             (intent.firing ? FLAG_FIRING : 0) | (this.time.now < this.abilityActiveUntil ? FLAG_ABILITY : 0);
         this.checkEnemyContact(dt);
+    }
+    /**
+     * Carry Heap Expansion stacks into the live player.
+     *
+     * Polled rather than pushed from the moment the upgrade is granted: reboots
+     * and the heal field both write `maxHp`, and one missed path is a player
+     * capped at their old maximum for the rest of the run. A comparison per frame
+     * is cheaper than the bug.
+     *
+     * The extra capacity arrives *filled*. A power-up that hands you headroom you
+     * then have to earn back is felt as nothing at the moment you take it, which
+     * for the one upgrade that exists to save your life is the wrong moment to be
+     * subtle. It also makes the pickup a small emergency heal, which is when it
+     * tends to be walked over.
+     */
+    syncMaxHealth() {
+        const max = this.progression.progress.maxHealth;
+        if (max === this.me.maxHp)
+            return;
+        this.me.hp = Math.min(max, this.me.hp + Math.max(0, max - this.me.maxHp));
+        this.me.maxHp = max;
     }
     /**
      * Out-of-combat healing.
@@ -852,6 +875,7 @@ export class GameScene extends Phaser.Scene {
     respawn() {
         // Full health. A partial reboot straight back into the wave that killed you
         // tends to mean dying again immediately, which spends a life on nothing.
+        this.me.maxHp = this.progression.progress.maxHealth;
         this.me.hp = this.me.maxHp;
         this.me.flags = 0;
         this.downedFor = 0;

@@ -1,6 +1,7 @@
 import { BROKERS } from '../config.js';
 import type { HudSnapshot } from '../render/GameScene.js';
 import { CLASSES, CLASS_ORDER, classDps, isClassId, weaponRange } from '../sim/classes.js';
+import { classIconSvg } from './classIcon.js';
 import type { ClassId } from '../types.js';
 import type { SettingsStore, InputSettings } from '../input/settings.js';
 import { RANGES } from '../input/settings.js';
@@ -383,6 +384,12 @@ export class UI {
           row.className = `roster-row${member.isHost ? ' is-host' : ''}`;
           row.style.setProperty('--slot', def.cssColour);
 
+          // The glyph inherits `--slot` through `currentColor`, so the row's
+          // accent colour is set once on the row and nowhere else.
+          const icon = document.createElement('span');
+          icon.className = 'roster-icon';
+          icon.innerHTML = classIconSvg(def.id);
+
           const name = document.createElement('span');
           name.className = 'roster-name';
           name.textContent = member.isSelf ? `${member.name} (you)` : member.name;
@@ -391,7 +398,7 @@ export class UI {
           cls.className = 'roster-class';
           cls.textContent = def.name;
 
-          row.append(name, cls);
+          row.append(icon, name, cls);
           if (member.isHost) {
             const tag = document.createElement('span');
             tag.className = 'roster-tag';

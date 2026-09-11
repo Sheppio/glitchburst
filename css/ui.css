@@ -440,6 +440,15 @@ body.console-platform .console-banner { display: flex; }
   border-left-color: var(--slot, var(--line-strong));
 }
 
+/* Sits in the row's accent colour, which the glyph picks up through
+   `currentColor` — the border-left and the icon are then one decision. */
+.roster-icon {
+  display: flex;
+  color: var(--slot, var(--ink-faint));
+  flex: 0 0 auto;
+}
+.roster-icon .class-icon { width: 21px; height: 21px; display: block; }
+
 .roster-name { font-family: var(--mono); font-size: 13px; font-weight: 700; letter-spacing: 0.06em; }
 .roster-class { font-size: 11px; color: var(--ink-faint); margin-left: auto; }
 .roster-tag {
@@ -908,7 +917,9 @@ body.console-platform .console-banner { display: flex; }
   transition: width 0.14s linear;
 }
 
-.upgrade-stacks { display: flex; gap: 5px; margin-top: 7px; }
+/* Wraps: there are five upgrades now, and a narrow phone HUD would otherwise
+   push the last chip off the edge of the panel. */
+.upgrade-stacks { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
 
 .upgrade-stack {
   font-size: 9.5px;

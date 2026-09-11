@@ -15,11 +15,12 @@ import { TEX } from './textures.js';
 export class ProgressionSystem {
     host;
     /** This player's run progress. Never leaves the client. */
-    progress = new PlayerProgress();
+    progress;
     chips;
     powerUps;
     constructor(host) {
         this.host = host;
+        this.progress = new PlayerProgress(host.baseMaxHp);
         this.chips = new Pool(() => ({
             sprite: host.scene.add.image(0, 0, TEX.chip).setDepth(12),
             x: 0, y: 0, vx: 0, vy: 0, homing: false, speed: 0, ttl: 0, active: false,

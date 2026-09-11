@@ -6,7 +6,7 @@
  * here imports Phaser or touches the wire.
  */
 
-export type UpgradeId = 'damage' | 'speed' | 'firerate' | 'regen';
+export type UpgradeId = 'damage' | 'speed' | 'firerate' | 'regen' | 'vitality';
 
 export interface UpgradeDef {
   id: UpgradeId;
@@ -68,6 +68,22 @@ export const UPGRADES: Record<UpgradeId, UpgradeDef> = {
     // state, and a horde shooter with no fail state is a screensaver.
     maxStacks: 12,
   },
+  vitality: {
+    id: 'vitality',
+    name: 'Heap Expansion',
+    short: 'HP',
+    blurb: '+16 maximum health',
+    colour: 0x9b5cff,
+    cssColour: '#9b5cff',
+    step: 16,
+    // Bounded by a ceiling on the *stat* rather than a count of stacks, because
+    // the classes do not start level: the same four stacks take the Glitcher
+    // from 90 to 154 and the Fireman from 190 to 254. A stack cap would either
+    // be generous to the tank or meaningless to the glass cannon. See
+    // `healthCeiling`, and `isMaxed`, which is what stops the roll offering an
+    // upgrade that can no longer do anything.
+    maxStacks: Infinity,
+  },
   firerate: {
     id: 'firerate',
     name: 'Pipeline Boost',
@@ -83,7 +99,7 @@ export const UPGRADES: Record<UpgradeId, UpgradeDef> = {
   },
 };
 
-export const UPGRADE_ORDER: UpgradeId[] = ['damage', 'speed', 'firerate', 'regen'];
+export const UPGRADE_ORDER: UpgradeId[] = ['damage', 'speed', 'firerate', 'regen', 'vitality'];
 
 export const PROGRESSION = {
   /**
@@ -131,6 +147,18 @@ export const PROGRESSION = {
   /** Hard cap on loose chips, so a cleared wave cannot flood the scene. */
   maxChips: 220,
 
+  /**
+   * Hard ceiling on maximum health, whatever the class and however many Heap
+   * Expansions are taken.
+   *
+   * Health is the one stat where an unbounded climb quietly removes the fail
+   * state: past a certain pool the horde stops being able to kill you inside a
+   * wave, and a horde shooter you cannot lose is a screensaver. 256 leaves the
+   * Fireman a modest four stacks and the Glitcher a run-defining ten, which is
+   * the right shape — the upgrade is worth most to whoever needs it most.
+   */
+  healthCeiling: 256,
+
   /** A power-up materialises this close to the player who earned it. */
   spawnRadius: 86,
   powerUpPickupRadius: 38,
@@ -151,7 +179,15 @@ export class PlayerProgress {
   powerUpsTaken = 0;
   /** Chips collected across the whole run, for the end-of-run readout. */
   totalChips = 0;
-  readonly stacks: Record<UpgradeId, number> = { damage: 0, speed: 0, firerate: 0, regen: 0 };
+  readonly stacks: Record<UpgradeId, number> =
+    { damage: 0, speed: 0, firerate: 0, regen: 0, vitality: 0 };
+
+  /**
+   * @param baseMaxHp the class's own maximum, which Heap Expansion builds on.
+   *   Defaulted so the common case — a test, or anything that only cares about
+   *   multipliers — does not have to know about classes at all.
+   */
+  constructor(readonly baseMaxHp: number = 100) {}
 
   /** Chips required for the next power-up, rising with each one taken. */
   get chipsNeeded(): number {
@@ -168,9 +204,21 @@ export class PlayerProgress {
     return true;
   }
 
+  /**
+   * Whether this upgrade has anything left to give *this* player.
+   *
+   * Not simply a stack count, because Heap Expansion is bounded by the health
+   * ceiling rather than by stacks, and the stack that reaches the ceiling is
+   * usually a partial one.
+   */
+  isMaxed(id: UpgradeId): boolean {
+    if (id === 'vitality') return this.maxHealth >= PROGRESSION.healthCeiling;
+    return this.stacks[id] >= UPGRADES[id].maxStacks;
+  }
+
   /** @returns false if that upgrade is already maxed. */
   grant(id: UpgradeId): boolean {
-    if (this.stacks[id] >= UPGRADES[id].maxStacks) return false;
+    if (this.isMaxed(id)) return false;
     this.stacks[id] += 1;
     return true;
   }
@@ -183,7 +231,7 @@ export class PlayerProgress {
    * someone who has never seen a speed boost.
    */
   rollUpgrade(random: () => number = Math.random): UpgradeId | null {
-    const available = UPGRADE_ORDER.filter((id) => this.stacks[id] < UPGRADES[id].maxStacks);
+    const available = UPGRADE_ORDER.filter((id) => !this.isMaxed(id));
     if (!available.length) return null;
 
     const weights = available.map((id) => 1 / (1 + this.stacks[id]));
@@ -216,6 +264,18 @@ export class PlayerProgress {
    */
   get bonusRegenPerSec(): number {
     return this.stacks.regen * UPGRADES.regen.step;
+  }
+
+  /**
+   * This player's maximum health, class base plus Heap Expansions, clamped.
+   *
+   * Clamped rather than refused: the stack that crosses the ceiling is allowed
+   * and simply gives what is left. Refusing it would mean a power-up that
+   * announces itself, plays its sound and does nothing, which reads as a bug.
+   */
+  get maxHealth(): number {
+    const raw = this.baseMaxHp + this.stacks.vitality * UPGRADES.vitality.step;
+    return Math.min(PROGRESSION.healthCeiling, raw);
   }
 
   get totalStacks(): number {
