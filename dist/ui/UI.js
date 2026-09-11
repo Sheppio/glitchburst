@@ -194,6 +194,18 @@ export class UI {
         this.text('lobby-room-code', code);
         this.text('hud-room', code);
     }
+    /**
+     * Label the character-select button for what it actually does.
+     *
+     * Both routes land on the same screen, but they are not the same act:
+     * opening a room is a deployment, walking into somebody else's is joining
+     * them. "Deploy" on a room you were invited to reads as though you are
+     * starting the match, which — since the host owns that — you are not.
+     */
+    setJoining(joining) {
+        this.text('btn-deploy', joining ? 'Join' : 'Deploy');
+        this.text('class-heading', joining ? 'Join squad' : 'Select program');
+    }
     /* ----------------------------------------------------------------- lobby */
     /**
      * The staging area between joining a room and starting a run.
@@ -623,7 +635,10 @@ export class UI {
         this.text('keyboard-preview', value || '—');
     }
     wireButtons() {
-        this.on('btn-create', () => this.callbacks.onCreateRoom(this.callsign));
+        this.on('btn-create', () => {
+            this.setJoining(false);
+            this.callbacks.onCreateRoom(this.callsign);
+        });
         this.on('btn-join-screen', () => this.show('join'));
         this.on('btn-settings', () => this.openSettings());
         this.on('btn-pause-settings', () => this.openSettings());
@@ -651,6 +666,7 @@ export class UI {
                 return;
             }
             const broker = this.el('select-broker').value;
+            this.setJoining(true);
             this.callbacks.onJoinRoom(this.callsign, code, broker);
         });
         // Enter submits whichever field the player is in — expected on desktop,

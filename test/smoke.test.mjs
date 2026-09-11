@@ -222,6 +222,37 @@ await step('out-of-range stored values are clamped, not trusted', async () => {
   };
 });
 
+await step('the character-select button says what it will do', async () => {
+  const read = async () => ({
+    button: (await page.textContent('#btn-deploy'))?.trim(),
+    heading: (await page.textContent('#class-heading'))?.trim(),
+  });
+
+  await page.click('#btn-create');
+  const creating = await read();
+  await page.click('#btn-class-back');
+
+  await page.click('#btn-join-screen');
+  await page.fill('#input-room', 'AB12');
+  await page.click('#btn-join');
+  const joining = await read();
+  await page.click('#btn-class-back');
+
+  // Not a one-way trip: going back and creating must restore the label.
+  await page.click('#btn-create');
+  const again = await read();
+  await page.click('#btn-class-back');
+
+  return {
+    ok:
+      creating.button === 'Deploy' &&
+      joining.button === 'Join' &&
+      joining.heading === 'Join squad' &&
+      again.button === 'Deploy',
+    note: `create "${creating.button}", join "${joining.button}", back to create "${again.button}"`,
+  };
+});
+
 await step('create room generates a code', async () => {
   await page.click('#btn-create');
   const code = (await page.textContent('#room-code-label'))?.trim();

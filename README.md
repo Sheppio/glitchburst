@@ -1,6 +1,6 @@
 # GLITCHBURST
 
-<!-- version -->**v0.2.19**<!-- /version --> — the build currently on Pages.
+<!-- version -->**v0.2.20**<!-- /version --> — the build currently on Pages.
 
 A co-op top-down horde shooter that runs entirely in the browser. **No game server.**
 Every client talks to a public MQTT broker over WebSockets, and one of them
@@ -38,7 +38,7 @@ Developing needs the compiler:
 ```bash
 npm install
 npm run watch      # tsc --watch, rebuilding dist/ on save
-npm test           # 303 tests: simulation, codec, single client, mobile, controller, two clients
+npm test           # 304 tests: simulation, codec, single client, mobile, controller, two clients
 ```
 
 `dist/` is committed on purpose — it is what GitHub Pages serves.
@@ -704,7 +704,7 @@ for a game — just don't build anything that needs privacy on top of it.
 npm test
 ```
 
-303 checks across five suites. The browser suites vendor Phaser locally and
+304 checks across five suites. The browser suites vendor Phaser locally and
 swap MQTT for a loopback stub that relays over `BroadcastChannel`, so two tabs
 share one "broker" and a real multi-client room can be tested offline.
 
@@ -715,7 +715,7 @@ share one "broker" and a real multi-client room can be tested offline.
   scoring formula, enemy levels and their health/reward curves, wave streaming
   and the tempo floor, the autopilot's steering bands and its survival against a
   live horde, and the audio volume curve.
-- **`smoke.test.mjs`** (43) — menus, settings persistence and migration, Phaser
+- **`smoke.test.mjs`** (44) — menus, settings persistence and migration, Phaser
   boot, election, 20 Hz batching, attacker-authority kills, point-blank hits,
   chip pickup and conversion, turn rate, abilities, pause, settings over a live
   match, and broadcast rate under a starved renderer.
