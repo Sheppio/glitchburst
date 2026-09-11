@@ -811,7 +811,14 @@ body.console-platform .console-banner { display: flex; }
 
 /* --------------------------------------------------------- assist chips */
 
-.assists { display: flex; gap: 6px; }
+/* Centred in the pause card now, rather than a strip over the arena. */
+.assists {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin: 18px 0 4px;
+}
 
 .assist-chip {
   font-family: var(--mono);
@@ -837,6 +844,62 @@ body.console-platform .console-banner { display: flex; }
   background: rgba(0, 200, 220, 0.1);
   box-shadow: 0 0 0 2px rgba(0, 200, 220, 0.12);
 }
+
+/* ------------------------------------------------------- on-screen keys */
+
+.keyboard-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 40; /* above the pause veil, which it can be opened from */
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(242, 245, 249, 0.88);
+  backdrop-filter: blur(6px);
+  animation: fade-in 0.14s ease-out;
+}
+
+.keyboard-panel { width: min(440px, 100%); }
+
+/* The text so far, sized so it is readable from a sofa. */
+.keyboard-preview {
+  font-family: var(--mono);
+  font-size: 24px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  text-align: center;
+  padding: 12px 10px;
+  margin-bottom: 14px;
+  color: var(--ink);
+  background: var(--surface-alt);
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius-sm);
+  min-height: 30px;
+  overflow-wrap: anywhere;
+}
+
+/* A real grid, because the navigator moves the focus ring spatially: laid out
+   in rows of seven, up/down/left/right land where the player is looking. */
+.keyboard-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+}
+
+.key {
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 700;
+  min-height: 44px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.key:hover { border-color: var(--cyan); }
 
 /* ---------------------------------------------------------------- toasts */
 

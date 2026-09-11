@@ -133,15 +133,21 @@ const ui = new UI(uiRoot, settings, {
   },
 
   /**
-   * Settings opened over a paused match.
+   * A menu opened or closed over a live match.
    *
    * The pad drives the character in-game, so menu navigation stands down on
-   * deploy. A modal settings screen needs it back — otherwise a console player
-   * can reach the pause veil but cannot move through the screen it opens.
+   * deploy — which leaves every mid-match menu unreachable from a controller
+   * unless it asks for navigation back. The pause card, the failure screen and
+   * settings all do.
    */
-  onSettingsVisible(visible) {
-    if (visible) navigator_.start();
-    else navigator_.stop();
+  onMenuVisible(visible) {
+    if (visible) {
+      navigator_.start();
+      navigator_.focusFirst();
+    } else {
+      navigator_.stop();
+      document.body.classList.remove('nav-focus');
+    }
   },
 
   onCancelConnect() {
@@ -158,6 +164,12 @@ navigator_.onConnection = (connected) => {
   ui.setGamepadConnected(connected);
   input.events.emit('schemeChange', { scheme: 'pad', label: 'Controller' });
 };
+
+// A freshly shown screen puts the ring on its first control, so a controller
+// player is never left with focus on something that is no longer on screen.
+document.addEventListener('gb:screen-shown', () => {
+  if (navigator_.connected) navigator_.focusFirst();
+});
 
 input.events.on('schemeChange', ({ label }) => ui.setScheme(label));
 net.events.on('status', ({ status, detail }) => {

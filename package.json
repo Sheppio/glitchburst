@@ -1,6 +1,6 @@
 {
   "name": "glitchburst",
-  "version": "0.2.15",
+  "version": "0.2.16",
   "private": true,
   "description": "Serverless co-op top-down horde shooter over MQTT/WebSockets. Distributed-host P2P architecture.",
   "type": "module",
@@ -9,14 +9,15 @@
     "watch": "tsc --watch",
     "check": "tsc --noEmit",
     "serve": "python3 -m http.server 8080",
-    "test": "npm run build && node test/sim.test.mjs && node test/smoke.test.mjs && node test/mobile.test.mjs && node test/multiplayer.test.mjs",
+    "test": "npm run build && node test/sim.test.mjs && node test/smoke.test.mjs && node test/mobile.test.mjs && node test/gamepad.test.mjs && node test/multiplayer.test.mjs",
     "test:sim": "node test/sim.test.mjs",
     "test:smoke": "node test/smoke.test.mjs",
     "test:mp": "node test/multiplayer.test.mjs",
     "test:mobile": "node test/mobile.test.mjs",
     "prepare": "git config core.hooksPath .githooks || true",
     "version:bump": "node scripts/bump-version.mjs",
-    "test:consistency": "node test/consistency.mjs"
+    "test:consistency": "node test/consistency.mjs",
+    "test:pad": "node test/gamepad.test.mjs"
   },
   "devDependencies": {
     "mqtt": "5.15.2",

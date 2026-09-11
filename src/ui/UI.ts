@@ -18,8 +18,11 @@ export interface UICallbacks {
   onCancelConnect(): void;
   onTogglePause(): void;
   onPlayAgain(): void;
-  /** The settings screen opened or closed over a live match. */
-  onSettingsVisible(visible: boolean): void;
+  /**
+   * A menu opened or closed over a live match — the pause card, the failure
+   * screen, or settings reached from the pause card.
+   */
+  onMenuVisible(visible: boolean): void;
 }
 
 interface ToggleDef {
@@ -136,6 +139,10 @@ export class UI {
   private current: ScreenId = 'menu';
   /** Where "Done" goes back to. Settings is reachable from the menu and mid-match. */
   private settingsReturn: ScreenId = 'menu';
+  /** Latch, so the shell is only told when in-game menu visibility changes. */
+  private menuVisible = false;
+  /** The field the on-screen keyboard is currently typing into. */
+  private keyboardTarget: HTMLInputElement | null = null;
 
   constructor(
     private root: HTMLElement,
@@ -159,6 +166,15 @@ export class UI {
     // chips, and the store's own defaults — so the controls follow the store
     // rather than each call site remembering to repaint them.
     this.settings.events.on('change', () => this.syncSettings());
+
+    this.buildKeyboard();
+    // Raised by the gamepad navigator when a text field is activated: a
+    // controller has no keys, so the UI supplies some.
+    document.addEventListener('gb:text-entry', (e) => {
+      const id = (e as CustomEvent<{ id: string }>).detail?.id;
+      const field = id ? document.getElementById(id) : null;
+      if (field instanceof HTMLInputElement) this.openKeyboard(field);
+    });
     this.detectConsolePlatform();
 
     document.addEventListener('gb:focus-locked', () => {
@@ -210,6 +226,13 @@ export class UI {
     }
     // The HUD is an overlay on live gameplay; every other screen is modal.
     this.root.classList.toggle('in-game', screen === 'hud');
+    this.syncInGameMenu();
+    this.announceScreen();
+  }
+
+  /** Ask the shell to put the controller focus ring on whatever is now shown. */
+  private announceScreen(): void {
+    document.dispatchEvent(new CustomEvent('gb:screen-shown'));
   }
 
   setRoomCode(code: string): void {
@@ -300,6 +323,8 @@ export class UI {
     this.el('chip-autoaim').setAttribute('aria-pressed', String(this.settings.current.autoAim));
     this.el('chip-autofire').setAttribute('aria-pressed', String(this.settings.current.autoFire));
     this.el('chip-automove').setAttribute('aria-pressed', String(this.settings.current.autoMove));
+
+    this.syncInGameMenu();
 
     this.renderSquad(s.squad);
   }
@@ -539,13 +564,103 @@ export class UI {
     this.settingsReturn = this.current;
     this.syncSettings();
     this.show('settings');
-    if (this.settingsReturn === 'hud') this.callbacks.onSettingsVisible(true);
   }
 
   private closeSettings(): void {
-    const back = this.settingsReturn;
-    this.show(back);
-    if (back === 'hud') this.callbacks.onSettingsVisible(false);
+    this.show(this.settingsReturn);
+  }
+
+  /**
+   * Tell the shell whether a menu is sitting over a live match.
+   *
+   * In-game the pad drives the character, so menu navigation stands down on
+   * deploy — which means every menu that can appear *during* a match has to ask
+   * for it back, or a controller player can reach the pause card and then do
+   * nothing with it. Latched, because this is called every frame from the HUD.
+   */
+  private syncInGameMenu(): void {
+    const overGame =
+      (this.current === 'hud' &&
+        (!this.el('pause-veil').hidden || !this.el('over-veil').hidden)) ||
+      (this.current === 'settings' && this.settingsReturn === 'hud') ||
+      (!this.el('keyboard-veil').hidden && this.settingsReturn === 'hud');
+
+    if (overGame === this.menuVisible) return;
+    this.menuVisible = overGame;
+    this.callbacks.onMenuVisible(overGame);
+  }
+
+  /* ------------------------------------------------------- on-screen keys */
+
+  /**
+   * A keyboard for players who have no keyboard.
+   *
+   * The callsign and the room code are the two places the game asks for text,
+   * and on a console they were unfillable: the navigator's old trick of
+   * clicking a focused field hoping the platform raises its own soft keyboard
+   * works on some console browsers and never on a desktop browser with a pad
+   * plugged in. Two text boxes were the whole game's front door.
+   *
+   * The keys are ordinary buttons in a grid, so they cost the navigator no new
+   * code at all — spatial movement already does the right thing on a grid, and
+   * the modal scoping keeps the ring inside it.
+   */
+  private buildKeyboard(): void {
+    const grid = this.el('keyboard-grid');
+    grid.replaceChildren(
+      ...[...'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-'].map((char) => {
+        const key = document.createElement('button');
+        key.type = 'button';
+        key.className = 'key';
+        key.textContent = char;
+        key.addEventListener('click', () => this.typeKey(char));
+        return key;
+      }),
+    );
+
+    this.on('btn-key-del', () => this.typeKey(null));
+    this.on('btn-key-done', () => this.closeKeyboard());
+  }
+
+  private openKeyboard(field: HTMLInputElement): void {
+    this.keyboardTarget = field;
+    this.text('keyboard-title', field.id === 'input-room' ? 'Room code' : 'Callsign');
+    this.el('keyboard-veil').hidden = false;
+    this.renderKeyboardPreview();
+    this.syncInGameMenu();
+    // Let the navigator place the ring: it owns the focus bookkeeping, and it
+    // scopes itself to the topmost modal, which is now this keyboard.
+    this.announceScreen();
+  }
+
+  private closeKeyboard(): void {
+    this.el('keyboard-veil').hidden = true;
+    const field = this.keyboardTarget;
+    this.keyboardTarget = null;
+    this.syncInGameMenu();
+    field?.focus();
+    this.announceScreen();
+  }
+
+  /** `null` deletes the last character. */
+  private typeKey(char: string | null): void {
+    const field = this.keyboardTarget;
+    if (!field) return;
+
+    const limit = field.maxLength > 0 ? field.maxLength : 14;
+    const next = char === null ? field.value.slice(0, -1) : (field.value + char).slice(0, limit);
+    if (next === field.value) return;
+
+    field.value = next;
+    // The same event typing raises, so callsign persistence and the join
+    // button's validation see this exactly as they see a real keystroke.
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+    this.renderKeyboardPreview();
+  }
+
+  private renderKeyboardPreview(): void {
+    const value = this.keyboardTarget?.value ?? '';
+    this.text('keyboard-preview', value || '—');
   }
 
   private wireButtons(): void {

@@ -1120,7 +1120,7 @@ export class GameScene extends Phaser.Scene {
   /** Escape on a keyboard, Start/Options on a pad. Host only. */
   private pollPauseInput(): void {
     if (!this.cfg.room.isHost) return;
-    if (this.cfg.input.gamepad.readNav().menu) this.togglePause();
+    if (this.cfg.input.gamepad.readPause()) this.togglePause();
   }
 
   /** Players plus decoys. Decoys carry a priority multiplier the AI divides by. */

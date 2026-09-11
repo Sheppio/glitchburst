@@ -218,18 +218,6 @@
             <span class="ability-state" id="ability-state">READY</span>
           </div>
 
-          <!-- Live assist state, toggleable without leaving the match. -->
-          <div class="assists">
-            <button class="assist-chip" id="chip-autoaim" type="button" data-nav-skip>
-              Auto-aim
-            </button>
-            <button class="assist-chip" id="chip-autofire" type="button" data-nav-skip>
-              Auto-fire
-            </button>
-            <button class="assist-chip" id="chip-automove" type="button" data-nav-skip>
-              Auto-move
-            </button>
-          </div>
         </div>
 
         <div class="hud-banner" id="hud-banner" hidden>
@@ -243,7 +231,7 @@
         </div>
 
         <!-- End of the run. -->
-        <div class="pause-veil over-veil" id="over-veil" hidden>
+        <div class="pause-veil over-veil" id="over-veil" data-nav-modal hidden>
           <div class="pause-card">
             <h2>SYSTEM FAILURE</h2>
             <p class="pause-by" id="over-reason">All reboots exhausted</p>
@@ -261,12 +249,22 @@
 
         <!-- Room-wide freeze. Only the host can lift it, because the horde
              only exists on the host. -->
-        <div class="pause-veil" id="pause-veil" hidden>
+        <div class="pause-veil" id="pause-veil" data-nav-modal hidden>
           <div class="pause-card">
             <h2>PAUSED</h2>
             <p class="pause-by" id="pause-by">Paused by the host</p>
+
+            <!-- The assists live here rather than on the HUD. On the HUD they
+                 were three permanent buttons a controller could never reach,
+                 sitting over the arena; paused, they are reachable by every
+                 input and cost the match nothing to change. -->
+            <div class="assists">
+              <button class="assist-chip" id="chip-autoaim" type="button">Auto-aim</button>
+              <button class="assist-chip" id="chip-autofire" type="button">Auto-fire</button>
+              <button class="assist-chip" id="chip-automove" type="button">Auto-move</button>
+            </div>
             <div class="button-row pause-actions">
-              <button class="btn btn-primary" id="btn-resume" data-nav-skip>Resume</button>
+              <button class="btn btn-primary" id="btn-resume" data-nav-default>Resume</button>
               <!-- Audio levels are the thing you want to change mid-match, and
                    a paused game is the only safe moment to go looking. -->
               <button class="btn btn-ghost" id="btn-pause-settings">Settings</button>
@@ -275,6 +273,21 @@
           </div>
         </div>
       </section>
+
+      <!-- --------------------------------------------------------- KEYBOARD -->
+      <!-- Text entry for a controller. Last in the DOM on purpose: the
+           navigator scopes itself to the *topmost* open modal. -->
+      <div class="keyboard-veil" id="keyboard-veil" data-nav-modal hidden>
+        <div class="panel panel-narrow keyboard-panel">
+          <h2 class="panel-title" id="keyboard-title">Enter text</h2>
+          <div class="keyboard-preview" id="keyboard-preview">&nbsp;</div>
+          <div class="keyboard-grid" id="keyboard-grid"></div>
+          <div class="button-row">
+            <button class="btn" id="btn-key-del" type="button">Delete</button>
+            <button class="btn btn-primary" id="btn-key-done" type="button" data-nav-back>Done</button>
+          </div>
+        </div>
+      </div>
 
       <!-- ----------------------------------------------------------- TOASTS -->
       <div class="toasts" id="toasts" aria-live="polite"></div>

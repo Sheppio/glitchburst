@@ -1,6 +1,6 @@
 # GLITCHBURST
 
-<!-- version -->**v0.2.15**<!-- /version --> — the build currently on Pages.
+<!-- version -->**v0.2.16**<!-- /version --> — the build currently on Pages.
 
 A co-op top-down horde shooter that runs entirely in the browser. **No game server.**
 Every client talks to a public MQTT broker over WebSockets, and one of them
@@ -38,7 +38,7 @@ Developing needs the compiler:
 ```bash
 npm install
 npm run watch      # tsc --watch, rebuilding dist/ on save
-npm test           # 249 tests: simulation, codec, single client, mobile, two clients
+npm test           # 261 tests: simulation, codec, single client, mobile, controller, two clients
 ```
 
 `dist/` is committed on purpose — it is what GitHub Pages serves.
@@ -585,6 +585,16 @@ Tuned for Xbox Edge, the PlayStation browser and the Steam Deck:
 - **Haptics.** `triggerRumble(weak, strong, durationMs)` over the Gamepad
   Haptics API, with presets fired on **taking damage** and **activating an
   ability** (plus lighter taps for shots, kills and menu focus).
+- **Text entry.** An on-screen keyboard, because a controller has no keys and
+  the callsign and room code are the game's front door. The keys are ordinary
+  buttons in a grid, so the focus ring already knows how to move across them.
+- **Every control operable.** Left/right on a focused slider adjusts it rather
+  than walking the ring off it, and a dropdown cycles in place — a native
+  `select` popup is drawn by the browser chrome, which a pad cannot drive at
+  all, so opening one on a console is a dead end with no way back.
+- **Modal scoping.** The ring is confined to the topmost open overlay, so it
+  cannot wander from a pause card onto the HUD behind it, and B closes the
+  overlay rather than the screen underneath.
 - **Full menu navigation.** D-pad or left stick moves a focus ring, A/Cross
   commits, B backs out — no virtual cursor. Navigation is *spatial* (compares
   bounding boxes), so the focus ring goes where you're looking on the class grid
@@ -627,7 +637,7 @@ for a game — just don't build anything that needs privacy on top of it.
 npm test
 ```
 
-249 checks across four suites. The browser suites vendor Phaser locally and
+261 checks across five suites. The browser suites vendor Phaser locally and
 swap MQTT for a loopback stub that relays over `BroadcastChannel`, so two tabs
 share one "broker" and a real multi-client room can be tested offline.
 
@@ -642,6 +652,9 @@ share one "broker" and a real multi-client room can be tested offline.
   boot, election, 20 Hz batching, attacker-authority kills, point-blank hits,
   chip pickup and conversion, turn rate, abilities, pause, settings over a live
   match, and broadcast rate under a starved renderer.
+- **`gamepad.test.mjs`** (12) — the whole front end driven by a virtual pad and
+  nothing else: no click, no keypress. Menu to match, the on-screen keyboard,
+  the pause card, a slider, and back out again.
 - **`mobile.test.mjs`** (14) — an emulated Pixel with a touchscreen and no
   mouse: taps through the whole flow, and hit-tests that nothing invisible is
   covering the buttons.

@@ -116,6 +116,27 @@ export class GamepadSource {
         this.actuator()?.reset?.().catch(() => undefined);
     }
     /**
+     * Start / Options, edge-triggered, on its own latch.
+     *
+     * The pause key is read by the game scene while `readNav` is read by the menu
+     * navigator, and both can be live at once — paused, with the pause card open.
+     * Sharing one latch made it a race: whichever polled first that frame
+     * consumed the edge and the other saw nothing, so pressing Start to resume
+     * either resumed or silently went fullscreen depending on rAF ordering. A
+     * separate latch lets both observe the same physical button independently.
+     */
+    readPause() {
+        const pad = this.pad();
+        if (!pad) {
+            this.pauseHeld = false;
+            return false;
+        }
+        const down = pad.buttons[BTN.MENU]?.pressed === true;
+        const pressed = down && !this.pauseHeld;
+        this.pauseHeld = down;
+        return pressed;
+    }
+    /**
      * Edge-detected menu navigation, so the front end is fully playable from the
      * pad without a virtual cursor. The D-pad and the left stick both drive it,
      * with key-repeat so holding a direction scrolls a long list.
@@ -147,6 +168,7 @@ export class GamepadSource {
         window.removeEventListener('gamepaddisconnected', this.onDisconnect);
     }
     /* ------------------------------------------------------------- internals */
+    pauseHeld = false;
     /** True on the press edge, then again on the repeat schedule while held. */
     edge(button, isDown, repeat) {
         const now = performance.now();
