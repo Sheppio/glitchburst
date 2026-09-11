@@ -4,9 +4,12 @@
 # The rebuild is not optional: src/version.ts feeds dist/, dist/ is committed
 # because Pages serves it directly, and CI fails the build if the two disagree.
 # Bumping without rebuilding would break every commit.
+#
+# README.md is staged too: it carries the version in a generated span, and the
+# consistency check fails if it lags behind package.json.
 set -e
 
 version=$(node scripts/bump-version.mjs)
 npm run build --silent
-git add package.json src/version.ts dist
+git add package.json src/version.ts README.md dist
 echo "glitchburst: v$version"

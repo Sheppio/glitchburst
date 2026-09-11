@@ -62,3 +62,22 @@ if (baked !== pkg.version) {
 }
 
 console.log(`version ${pkg.version} baked in`);
+
+// The README states the version too, in a span the bump script rewrites. Both
+// are keyed on the same literal markers; if they ever stop matching, this is
+// where it surfaces rather than in a README quietly advertising an old build.
+const readmeVersion = readme.match(/<!-- version -->\*\*v([^*]+)\*\*<!-- \/version -->/)?.[1];
+
+if (!readmeVersion) {
+  console.error("::error::README.md has no '<!-- version -->**vX.Y.Z**<!-- /version -->' span for the bump script to rewrite.");
+  process.exit(1);
+}
+
+if (readmeVersion !== pkg.version) {
+  console.error(
+    `::error::README.md says v${readmeVersion} but package.json says ${pkg.version}. The pre-commit hook should rewrite it — is README.md staged?`,
+  );
+  process.exit(1);
+}
+
+console.log(`README states v${readmeVersion}`);

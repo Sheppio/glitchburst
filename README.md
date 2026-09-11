@@ -1,5 +1,7 @@
 # GLITCHBURST
 
+<!-- version -->**v0.2.10**<!-- /version --> — the build currently on Pages.
+
 A co-op top-down horde shooter that runs entirely in the browser. **No game server.**
 Every client talks to a public MQTT broker over WebSockets, and one of them
 volunteers to run the horde.

@@ -17,6 +17,17 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PACKAGE = join(ROOT, 'package.json');
 const SOURCE = join(ROOT, 'src', 'version.ts');
+const README = join(ROOT, 'README.md');
+
+/**
+ * The generated span in README.md. Matched on the markers, not on the text.
+ *
+ * Deliberately not exported: this module bumps the version as a side effect of
+ * being loaded, so anything that imported the pattern would bump the version
+ * just by asking what it was. `test/consistency.mjs` keys off the same literal
+ * markers and fails loudly if they ever stop matching.
+ */
+const VERSION_MARKERS = /(<!-- version -->)[\s\S]*?(<!-- \/version -->)/;
 
 const pkg = JSON.parse(await readFile(PACKAGE, 'utf8'));
 const [major, minor, patch] = String(pkg.version ?? '0.0.0').split('.').map(Number);
@@ -46,5 +57,22 @@ await writeFile(
 export const VERSION = '${next}';
 `,
 );
+
+/**
+ * The README states the version too, so it is rewritten here rather than by
+ * hand. A version number a human has to remember to update is one that is
+ * wrong within a commit or two — and a README claiming the wrong build is
+ * worse than a README claiming none, because that is the number a bug report
+ * quotes back at you.
+ */
+const readme = await readFile(README, 'utf8');
+if (!VERSION_MARKERS.test(readme)) {
+  console.error('::error::README.md is missing its <!-- version --> markers.');
+  process.exit(1);
+}
+const updated = readme.replace(VERSION_MARKERS, `$1**v${next}**$2`);
+if (!process.argv.includes('--check') && updated !== readme) {
+  await writeFile(README, updated);
+}
 
 console.log(next);
