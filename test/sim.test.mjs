@@ -15,6 +15,7 @@ import { ALL_KINDS, ENEMY_DEFS } from '../dist/sim/enemyTypes.js';
 import { pickTarget, targetScore, TARGETING } from '../dist/sim/targeting.js';
 import { CLASSES, CLASS_ORDER, classDps, weaponRange } from '../dist/sim/classes.js';
 import { Pool } from '../dist/render/pool.js';
+import { fadeOut } from '../dist/render/lerp.js';
 
 const { check, finish } = reporter('GLITCHBURST — simulation & codec');
 
@@ -250,10 +251,20 @@ const run = (engine, seconds, t = targets(1)) => {
   check('power-ups cost more as they accumulate', later > first,
     `${first} chips for the first, ${later} for the ${p.powerUpsTaken + 1}th`);
 
-  const maxed = new PlayerProgress();
-  for (let i = 0; i < 20000; i++) maxed.addChip();
-  check('the price is capped', maxed.chipsNeeded === PROGRESSION.chipCostMax,
-    `${maxed.chipsNeeded} chips`);
+  // The price is a simple count the player can follow, with no ceiling: the
+  // stack caps bound it naturally, and a ceiling would flatten the last third
+  // of the curve back into the plateau this was meant to remove.
+  const seq = new PlayerProgress();
+  const costs = [];
+  for (let n = 0; n < 12; n++) {
+    costs.push(seq.chipsNeeded);
+    const price = seq.chipsNeeded;
+    for (let i = 0; i < price; i++) seq.addChip();
+  }
+  const steps = costs.slice(1).map((c, i) => c - costs[i]);
+  check('each power-up costs exactly one chip more than the last',
+    steps.every((d) => d === 1) && costs[0] === PROGRESSION.chipsPerPowerUp,
+    costs.slice(0, 6).join(', ') + ' ...');
 
   const swing =
     (1 + UPGRADES.damage.step * UPGRADES.damage.maxStacks) *
@@ -299,6 +310,20 @@ const run = (engine, seconds, t = targets(1)) => {
     ENEMY_DEFS[1].chipDrop > ENEMY_DEFS[0].chipDrop &&
     ENEMY_DEFS[2].powerUpChance > ENEMY_DEFS[1].powerUpChance,
     `chips ${ENEMY_DEFS[0].chipDrop}/${ENEMY_DEFS[1].chipDrop}/${ENEMY_DEFS[2].chipDrop}`);
+}
+
+/* ------------------------------------------------------------ bullet fade */
+
+{
+  check('a fresh round is fully opaque', fadeOut(0.3, 0.3) === 1);
+  check('a round stays opaque through most of its life', fadeOut(0.15, 0.3) === 1);
+  check('a round thins out near the end of its range', fadeOut(0.05, 0.3) < 0.6 && fadeOut(0.05, 0.3) > 0,
+    `alpha ${fadeOut(0.05, 0.3).toFixed(2)} with a sixth of its life left`);
+  check('an expired round is invisible rather than negative', fadeOut(0, 0.3) === 0 && fadeOut(-1, 0.3) === 0);
+  check('the fade is monotonic', [0.3, 0.2, 0.1, 0.05, 0.02, 0]
+    .map((l) => fadeOut(l, 0.3))
+    .every((v, i, a) => i === 0 || v <= a[i - 1]));
+  check('a zero lifetime cannot divide by zero', fadeOut(1, 0) === 1);
 }
 
 /* ----------------------------------------------------------------- pool */

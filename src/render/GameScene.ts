@@ -33,7 +33,7 @@ import type { AiTarget, ClassId, EnemyId, FieldEffect, PlayerId, PlayerState, Ve
 import { approachAngle, clamp, counterId, dist2, lerpAngle, segmentDist2 } from '../util.js';
 import type { Sfx } from '../audio/Sfx.js';
 import { DAMAGE_RED, Fx } from './fx.js';
-import { glide, smoothing } from './lerp.js';
+import { fadeOut, glide, smoothing } from './lerp.js';
 import { Pool } from './pool.js';
 import { ProgressionSystem } from './Progression.js';
 import { TEX } from './textures.js';
@@ -100,6 +100,8 @@ interface Bullet {
   vx: number;
   vy: number;
   life: number;
+  /** Lifetime it started with, so the tail end can be faded out. */
+  maxLife: number;
   damage: number;
   pierce: number;
   radius: number;
@@ -115,6 +117,7 @@ interface EnemyBullet {
   vx: number;
   vy: number;
   life: number;
+  maxLife: number;
   damage: number;
   active: boolean;
 }
@@ -198,13 +201,13 @@ export class GameScene extends Phaser.Scene {
   private fields = new Map<string, ActiveField>();
   private bullets = new Pool<Bullet>(() => ({
     sprite: this.add.image(0, 0, TEX.bullet).setDepth(25),
-    x: 0, y: 0, vx: 0, vy: 0, life: 0, damage: 0, pierce: 1, radius: 5, knockback: 0,
+    x: 0, y: 0, vx: 0, vy: 0, life: 0, maxLife: 1, damage: 0, pierce: 1, radius: 5, knockback: 0,
     hit: new Set(), active: false,
   }));
 
   private enemyBullets = new Pool<EnemyBullet>(() => ({
     sprite: this.add.image(0, 0, TEX.enemyBullet).setDepth(24).setTint(ENEMY_DEFS[EnemyKind.FirewallDrone].colour),
-    x: 0, y: 0, vx: 0, vy: 0, life: 0, damage: 0, active: false,
+    x: 0, y: 0, vx: 0, vy: 0, life: 0, maxLife: 1, damage: 0, active: false,
   }));
   /**
    * Projectiles fired by *other* players.
@@ -216,7 +219,7 @@ export class GameScene extends Phaser.Scene {
    */
   private remoteBullets = new Pool<EnemyBullet>(() => ({
     sprite: this.add.image(0, 0, TEX.bullet).setDepth(24),
-    x: 0, y: 0, vx: 0, vy: 0, life: 0, damage: 0, active: false,
+    x: 0, y: 0, vx: 0, vy: 0, life: 0, maxLife: 1, damage: 0, active: false,
   }));
   /** Shots fired locally since the last publish. */
   private outboundShots: ShotRecord[] = [];
@@ -493,6 +496,7 @@ export class GameScene extends Phaser.Scene {
       bullet.vx = Math.cos(a) * w.speed;
       bullet.vy = Math.sin(a) * w.speed;
       bullet.life = w.lifeSec;
+      bullet.maxLife = w.lifeSec;
       bullet.damage = damage;
       bullet.pierce = w.pierce;
       bullet.radius = w.radius;
@@ -503,6 +507,7 @@ export class GameScene extends Phaser.Scene {
         .setPosition(bullet.x, bullet.y)
         .setRotation(a)
         .setTint(this.def.colour)
+        .setAlpha(1)
         .setVisible(true);
     }
 
@@ -602,8 +607,13 @@ export class GameScene extends Phaser.Scene {
         this.retireBullet(b);
         continue;
       }
-      b.sprite.setPosition(b.x, b.y);
-      trails.lineStyle(3, b.sprite.tintTopLeft, 0.4);
+      // Fade out over the last stretch of the round's life. A bullet that
+      // simply vanishes at maximum range reads as a glitch; one that thins out
+      // reads as the round losing energy, and incidentally shows the player
+      // where their weapon actually stops.
+      const fade = fadeOut(b.life, b.maxLife);
+      b.sprite.setPosition(b.x, b.y).setAlpha(fade);
+      trails.lineStyle(3, b.sprite.tintTopLeft, 0.4 * fade);
       trails.lineBetween(fromX, fromY, b.x, b.y);
 
       for (const enemy of this.enemies.values()) {
@@ -709,7 +719,7 @@ export class GameScene extends Phaser.Scene {
         b.sprite.setVisible(false);
         continue;
       }
-      b.sprite.setPosition(b.x, b.y).setRotation(Math.atan2(b.vy, b.vx));
+      b.sprite.setPosition(b.x, b.y).setRotation(Math.atan2(b.vy, b.vx)).setAlpha(fadeOut(b.life, b.maxLife));
 
       // Only ever tested against the local player — again, victim authority.
       if (this.downedFor <= 0 && dist2(b.x, b.y, this.me.x, this.me.y) <= reach * reach) {
@@ -1267,6 +1277,7 @@ export class GameScene extends Phaser.Scene {
       bullet.vx = Math.cos(a) * w.speed;
       bullet.vy = Math.sin(a) * w.speed;
       bullet.life = w.lifeSec;
+      bullet.maxLife = w.lifeSec;
       bullet.damage = 0;
       bullet.active = true;
       bullet.sprite
@@ -1274,6 +1285,7 @@ export class GameScene extends Phaser.Scene {
         .setPosition(bullet.x, bullet.y)
         .setRotation(a)
         .setTint(def.colour)
+        .setAlpha(1)
         .setVisible(true);
     }
 
@@ -1299,8 +1311,9 @@ export class GameScene extends Phaser.Scene {
         b.sprite.setVisible(false);
         continue;
       }
-      b.sprite.setPosition(b.x, b.y);
-      trails.lineStyle(3, b.sprite.tintTopLeft, 0.3);
+      const fade = fadeOut(b.life, b.maxLife);
+      b.sprite.setPosition(b.x, b.y).setAlpha(fade);
+      trails.lineStyle(3, b.sprite.tintTopLeft, 0.3 * fade);
       trails.lineBetween(fromX, fromY, b.x, b.y);
     }
   }
@@ -1417,8 +1430,8 @@ export class GameScene extends Phaser.Scene {
 
   private spawnEnemyBullet(x: number, y: number, vx: number, vy: number, damage: number): void {
     const bullet = this.enemyBullets.acquire();
-    Object.assign(bullet, { x, y, vx, vy, damage, life: 3.2, active: true });
-    bullet.sprite.setPosition(x, y).setVisible(true);
+    Object.assign(bullet, { x, y, vx, vy, damage, life: 3.2, maxLife: 3.2, active: true });
+    bullet.sprite.setPosition(x, y).setAlpha(1).setVisible(true);
   }
 
   /* ------------------------------------------------------------------- HUD */

@@ -62,10 +62,16 @@ export const PROGRESSION = {
      * genuinely earned.
      */
     chipsPerPowerUp: 8,
-    /** Added to the price for each power-up already taken. */
-    chipCostGrowth: 1.5,
-    /** Price ceiling, so a very long run does not stall entirely. */
-    chipCostMax: 45,
+    /**
+     * Added to the price for each power-up already taken.
+     *
+     * One extra chip per power-up, so the cost reads as a simple count the player
+     * can follow: 8, 9, 10, 11. There is no ceiling — the stack caps bound it
+     * naturally, and the most expensive upgrade in a maxed run costs 67. A
+     * ceiling would have made the last third of the curve flat, which is exactly
+     * the plateau this was meant to remove.
+     */
+    chipCostGrowth: 1,
     /** Chips inside this radius latch on and home in. */
     magnetRadius: 175,
     /** ...and are collected inside this one. */
@@ -109,7 +115,7 @@ export class PlayerProgress {
     stacks = { damage: 0, speed: 0, firerate: 0, regen: 0 };
     /** Chips required for the next power-up, rising with each one taken. */
     get chipsNeeded() {
-        return Math.min(PROGRESSION.chipCostMax, PROGRESSION.chipsPerPowerUp + this.powerUpsTaken * PROGRESSION.chipCostGrowth);
+        return PROGRESSION.chipsPerPowerUp + this.powerUpsTaken * PROGRESSION.chipCostGrowth;
     }
     /** @returns true if this chip completed a set and earned a power-up. */
     addChip() {

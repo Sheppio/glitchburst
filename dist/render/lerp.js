@@ -34,4 +34,21 @@ export function glide(current, targetX, targetY, base, deltaMs, snapDistance) {
     current.x += dx * t;
     current.y += dy * t;
 }
+/**
+ * Opacity for a projectile with `life` of `maxLife` remaining.
+ *
+ * Full opacity until the last third, then a linear fade to nothing. A round
+ * that simply vanishes at maximum range reads as a glitch; one that thins out
+ * reads as the round losing energy — and incidentally shows the player exactly
+ * where their weapon stops being useful.
+ *
+ * Lives here rather than in the scene because it is pure arithmetic, which
+ * means it can be tested in Node without a browser.
+ */
+export function fadeOut(life, maxLife) {
+    if (!(maxLife > 0))
+        return 1;
+    const t = life / (maxLife * 0.34);
+    return t < 0 ? 0 : t > 1 ? 1 : t;
+}
 //# sourceMappingURL=lerp.js.map

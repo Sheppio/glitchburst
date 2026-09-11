@@ -36,7 +36,7 @@ Developing needs the compiler:
 ```bash
 npm install
 npm run watch      # tsc --watch, rebuilding dist/ on save
-npm test           # 169 tests: simulation, codec, single client, mobile, two clients
+npm test           # 176 tests: simulation, codec, single client, mobile, two clients
 ```
 
 `dist/` is committed on purpose — it is what GitHub Pages serves.
@@ -153,6 +153,10 @@ The naive `pos += (target - pos) * 0.2` converges twice as fast at 144 Hz as at
 60, so two players would literally see different games. Beyond a snap distance
 the sprite jumps instead — that far a jump means a teleport really happened, and
 smoothing across it would draw an enemy sliding through arena it was never in.
+
+Rounds fade out over the last third of their lifetime rather than blinking out
+of existence at maximum range — which reads as a glitch, and hides where a
+weapon actually stops being useful.
 
 Enemy AI steers **straight at the nearest target** — no navmesh, no A*, no
 line-of-sight. The only concession is a uniform-grid separation pass so the
@@ -426,16 +430,16 @@ for a game — just don't build anything that needs privacy on top of it.
 npm test
 ```
 
-169 checks across four suites. The browser suites vendor Phaser locally and
+176 checks across four suites. The browser suites vendor Phaser locally and
 swap MQTT for a loopback stub that relays over `BroadcastChannel`, so two tabs
 share one "broker" and a real multi-client room can be tested offline.
 
-- **`sim.test.mjs`** (94) — codec round-trips, truncation tolerance, payload
+- **`sim.test.mjs`** (100) — codec round-trips, truncation tolerance, payload
   size at the cap, enemy cap, difficulty scaling, wave pacing, damage
   attribution, steering, decoy priority, host adoption, shockwave, progression
   and upgrade caps, deterministic drop rolls, turn-rate limiting, and the
   auto-aim scoring formula.
-- **`smoke.test.mjs`** (30) — menus, persistence, Phaser boot, election, 20 Hz
+- **`smoke.test.mjs`** (31) — menus, persistence, Phaser boot, election, 20 Hz
   batching, attacker-authority kills, point-blank hits, chip pickup and
   conversion, turn rate, abilities, pause, and broadcast rate under a starved
   renderer.

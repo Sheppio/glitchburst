@@ -287,6 +287,40 @@ await step('a chip cannot be outrun', async () => {
   };
 });
 
+await step('bullets fade out at the end of their range', async () => {
+  const out = await page.evaluate(async () => {
+    const scene = window.glitchburst.game.scene.getScene('game');
+
+    // Drive a round directly rather than firing one. Auto-fire was the obvious
+    // approach and is unusable here: at the arena centre the player is
+    // surrounded, so every pellet connects and retires on the frame it is
+    // fired, and at the edge they spawn out of bounds. Neither says anything
+    // about fading.
+    const bullet = scene.bullets.acquire();
+    Object.assign(bullet, {
+      x: 60, y: 60, vx: 0, vy: 0, maxLife: 3, life: 3,
+      damage: 0, pierce: 999, radius: 1, knockback: 0, active: true,
+    });
+    bullet.hit.clear();
+    bullet.sprite.setVisible(true).setAlpha(1);
+
+    await new Promise((r) => requestAnimationFrame(r));
+    const fresh = bullet.sprite.alpha;
+
+    bullet.life = 0.2;
+    await new Promise((r) => requestAnimationFrame(r));
+    const expiring = bullet.sprite.alpha;
+
+    bullet.active = false;
+    bullet.sprite.setVisible(false);
+    return { fresh, expiring };
+  });
+  return {
+    ok: out.fresh > 0.95 && out.expiring < 0.4 && out.expiring > 0,
+    note: `alpha ${out.fresh.toFixed(2)} fresh, ${out.expiring.toFixed(2)} expiring`,
+  };
+});
+
 await step('a point-blank enemy is still hittable', async () => {
   const out = await page.evaluate(async () => {
     const scene = window.glitchburst.game.scene.getScene('game');
