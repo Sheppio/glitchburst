@@ -73,6 +73,8 @@ export interface PlayerState {
   maxHp: number;
   /** Bitfield: 1 = firing, 2 = ability active, 4 = downed. */
   flags: number;
+  /** Palette id. What this player *asked* for — see `sim/palette.ts`. */
+  colour: string;
   /** Local receive timestamp, used for roster timeouts. Never transmitted. */
   lastSeen: number;
 }

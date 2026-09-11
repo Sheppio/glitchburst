@@ -310,6 +310,52 @@ check('a lobby rename reaches the rest of the squad',
 check('and so does a change of program', afterIdentity.cls === 'glitcher',
   `${beforeIdentity.cls} → ${afterIdentity.cls}`);
 
+// Two clients asking for the same colour, with no server to arbitrate. Every
+// client runs the same resolver over the same presence list; the earlier id
+// keeps its choice and the later one moves, and both must reach that answer
+// alone. Two identical chassis in a swarm of a hundred is the bug this avoids.
+await a.evaluate(() => window.glitchburst.room.setIdentity('RENAMED', 'glitcher', 'violet'));
+await b.evaluate(() => {
+  const room = window.glitchburst.room;
+  room.setIdentity('BRAVO', room.peers.values().next().value?.cls ?? 'overclocker', 'violet');
+});
+const settled = await b
+  .waitForFunction(
+    () => [...window.glitchburst.room.peers.values()][0]?.colour === 'violet',
+    null, { timeout: 4000 },
+  )
+  .then(() => true)
+  .catch(() => false);
+await a.waitForTimeout(600);
+
+const ids = await a.evaluate(() => ({
+  me: window.glitchburst.room.playerId,
+  peer: [...window.glitchburst.room.peers.values()][0]?.id,
+}));
+const onA = await a.evaluate(() => window.glitchburst.room.resolvedColours());
+const onB = await b.evaluate(() => window.glitchburst.room.resolvedColours());
+const senior = ids.me < ids.peer ? ids.me : ids.peer;
+
+check('a colour clash is resolved without either client asking the other',
+  settled && onA[ids.me] !== onA[ids.peer],
+  `${onA[ids.me]} and ${onA[ids.peer]}`);
+check('both clients reach the same answer alone',
+  JSON.stringify(onA) === JSON.stringify(onB),
+  `A says ${JSON.stringify(onA)}, B says ${JSON.stringify(onB)}`);
+check('the earlier player keeps what they asked for', onA[senior] === 'violet',
+  `${senior === ids.me ? 'A' : 'B'} joined first and kept violet`);
+
+// ...and the resolved colour is what actually gets drawn, on the client that
+// did *not* choose it.
+const drawn = await a.evaluate((peerId) => {
+  const scene = window.glitchburst.game.scene.getScene('game');
+  const remote = scene.remotes.get(peerId);
+  return remote ? { swatch: remote.swatch, texture: remote.sprite.texture.key } : null;
+}, ids.peer);
+check('a teammate is drawn in their settled colour, not their claim',
+  Boolean(drawn) && drawn.swatch === onA[ids.peer] && drawn.texture.endsWith(`-${onA[ids.peer]}`),
+  drawn ? `${drawn.texture} for a resolved ${onA[ids.peer]}` : 'no remote sprite');
+
 /* --------------------------------------------------------- seeing the squad */
 
 // Make the host fire, and confirm the peer actually renders those rounds.

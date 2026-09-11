@@ -1322,6 +1322,56 @@ await step('return to lobby keeps the room and drops the match', async () => {
   };
 });
 
+/** Set by the colour step, checked against the chassis by the step after it. */
+let chosenColour = null;
+
+await step('picking a colour re-skins the chassis', async () => {
+  const before = await page.evaluate(() => ({
+    colour: window.glitchburst.room.claimedColour,
+    swatches: document.querySelectorAll('#colour-grid-lobby .colour-swatch').length,
+    pressed: document.querySelector('#colour-grid-lobby .colour-swatch[aria-pressed="true"]')
+      ?.dataset.colour,
+  }));
+
+  const picked = await page.evaluate(() => {
+    const grid = document.getElementById('colour-grid-lobby');
+    const next = [...grid.querySelectorAll('.colour-swatch')]
+      .find((b) => b.dataset.colour !== document.querySelector(
+        '#colour-grid-lobby .colour-swatch[aria-pressed="true"]')?.dataset.colour);
+    next.click();
+    return next.dataset.colour;
+  });
+  await page.waitForTimeout(150);
+
+  const after = await page.evaluate(() => ({
+    claimed: window.glitchburst.room.claimedColour,
+    settled: window.glitchburst.room.colourId,
+    pressed: document.querySelector('#colour-grid-lobby .colour-swatch[aria-pressed="true"]')
+      ?.dataset.colour,
+    // The other picker is a second control over one choice, like the program
+    // grid and the program select.
+    mirrored: document.querySelector('#colour-grid-class .colour-swatch[aria-pressed="true"]')
+      ?.dataset.colour,
+    rowColour: document.querySelector('.roster-row')?.style.getPropertyValue('--slot'),
+    stored: localStorage.getItem('glitchburst.colour'),
+  }));
+
+  const ok =
+    before.swatches === 8 &&
+    picked !== before.pressed &&
+    after.claimed === picked &&
+    after.settled === picked &&
+    after.pressed === picked &&
+    after.mirrored === picked &&
+    after.stored === picked &&
+    after.rowColour.length > 0;
+
+  // The run itself is started by the next step, which checks the chassis
+  // actually comes out in this colour.
+  chosenColour = picked;
+  return { ok, note: `${before.pressed} → ${picked}; roster row painted ${after.rowColour}` };
+});
+
 await step('the staging area edits the callsign and cycles the program', async () => {
   const before = await page.evaluate(() => ({
     name: document.querySelector('.roster-name')?.textContent,
@@ -1372,7 +1422,14 @@ await step('the staging area edits the callsign and cycles the program', async (
   );
   const run = await page.evaluate(() => {
     const scene = window.glitchburst.game.scene.getScene('game');
-    return { cls: scene.def.id, name: scene.cfg.playerName };
+    return {
+      cls: scene.def.id,
+      name: scene.cfg.playerName,
+      // Baked into the texture rather than tinted: the chassis is mostly white,
+      // and a tint would take the body down with the ring.
+      texture: scene.player.texture.key,
+      colourId: scene.colourId,
+    };
   });
 
   const ok =
@@ -1387,13 +1444,16 @@ await step('the staging area edits the callsign and cycles the program', async (
     after.stored === 'REWIRED' &&
     after.storedClass === picked &&
     run.cls === picked &&
-    run.name === 'REWIRED';
+    run.name === 'REWIRED' &&
+    run.colourId === chosenColour &&
+    run.texture === `tex-player-${picked}-${chosenColour}`;
 
   return {
     ok,
     note: `${before.name} → ${after.name}, ${before.cls} → ${after.cls}, glyph ${
       before.icon === after.icon ? 'UNCHANGED' : 'redrawn'} in ${after.iconColour}; ` +
-      `run deployed as ${run.cls}/${run.name} (wanted ${picked}/REWIRED)`,
+      `run deployed as ${run.cls}/${run.name}, chassis ${run.texture} ` +
+      `(wanted ${picked}/REWIRED in ${chosenColour})`,
   };
 });
 

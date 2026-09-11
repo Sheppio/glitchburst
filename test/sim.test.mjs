@@ -24,6 +24,9 @@ import { Pool } from '../dist/render/pool.js';
 import { fadeOut } from '../dist/render/lerp.js';
 import { orderSquad } from '../dist/render/squadOrder.js';
 import { classIconSvg } from '../dist/ui/classIcon.js';
+import {
+  COLOUR_ORDER, DEFAULT_COLOUR, PALETTE, colourOf, isColourId, resolveColours,
+} from '../dist/sim/palette.js';
 import { edgeMarker } from '../dist/render/edgeMarkers.js';
 import {
   accuracy, EMPTY_PLAYER_STATS, formatDuration, summaryRows, sumPlayerStats,
@@ -568,6 +571,73 @@ const run = (engine, seconds, t = targets(1)) => {
   const original = [...roster];
   orderSquad(roster);
   check('the caller\'s array is left alone', roster.map((m) => m.id).join() === original.map((m) => m.id).join());
+}
+
+/* --------------------------------------------------------- player colours */
+
+{
+  // Colour says *who*, not what program — two people running the same class
+  // used to be two identical circles in a swarm of a hundred enemies. Which
+  // means no two players in a room can wear the same one, and there is no
+  // server to arbitrate that.
+  const ids = (m) => COLOUR_ORDER.filter((c) => Object.values(m).includes(c));
+
+  const clear = resolveColours([
+    { id: 'a', colour: 'cyan' },
+    { id: 'b', colour: 'amber' },
+    { id: 'c', colour: 'jade' },
+  ]);
+  check('nobody is moved when nobody clashes',
+    clear.a === 'cyan' && clear.b === 'amber' && clear.c === 'jade');
+
+  // Seniority: ids are time-prefixed, so the earliest joiner keeps what they
+  // asked for. Nobody's colour changes under them because somebody walked in.
+  const clash = resolveColours([
+    { id: 'aaa', colour: 'magenta' },
+    { id: 'bbb', colour: 'magenta' },
+  ]);
+  check('the earlier player keeps the colour', clash.aaa === 'magenta');
+  check('and the later one is moved to the next free entry', clash.bbb === 'lime',
+    `moved to ${clash.bbb}`);
+
+  // Determinism is the whole point: every client computes this alone, from the
+  // same presence list, and has to arrive at the same answer.
+  const forwards = resolveColours([
+    { id: 'a', colour: 'violet' }, { id: 'b', colour: 'violet' }, { id: 'c', colour: 'violet' },
+  ]);
+  const backwards = resolveColours([
+    { id: 'c', colour: 'violet' }, { id: 'b', colour: 'violet' }, { id: 'a', colour: 'violet' },
+  ]);
+  check('the answer does not depend on the order claims arrived in',
+    JSON.stringify(forwards) === JSON.stringify(backwards),
+    `${JSON.stringify(forwards)} vs ${JSON.stringify(backwards)}`);
+  check('a three-way pile-up still ends with three different colours',
+    new Set(Object.values(forwards)).size === 3, Object.values(forwards).join(', '));
+
+  // Wrapping: a clash at the end of the palette comes round to the front.
+  const wrapped = resolveColours([
+    { id: 'a', colour: 'jade' }, { id: 'b', colour: 'jade' },
+  ]);
+  check('a clash on the last colour wraps to the first',
+    wrapped.b === COLOUR_ORDER[0], `wrapped to ${wrapped.b}`);
+
+  // A full room. Four players, eight colours, always somewhere to go.
+  const full = resolveColours(['a', 'b', 'c', 'd'].map((id) => ({ id, colour: 'cyan' })));
+  check('a full squad all asking for the same colour gets four different ones',
+    new Set(Object.values(full)).size === 4, Object.values(full).join(', '));
+
+  // An older build, or a corrupted field. Never an undefined colour.
+  const junk = resolveColours([{ id: 'a', colour: 'chartreuse' }, { id: 'b', colour: '' }]);
+  check('an unknown colour reads as the default, and still does not clash',
+    junk.a === DEFAULT_COLOUR && junk.b !== DEFAULT_COLOUR && ids(junk).length === 2,
+    `${junk.a}, ${junk.b}`);
+
+  check('every palette entry is a colour the game can resolve',
+    PALETTE.every((c) => colourOf(c.id) === c && isColourId(c.id)));
+  check('and colourOf never returns nothing',
+    colourOf('nonsense').id === DEFAULT_COLOUR);
+  check('the palette outnumbers the room', PALETTE.length > HORDE.maxPlayers,
+    `${PALETTE.length} colours for ${HORDE.maxPlayers} players`);
 }
 
 /* ------------------------------------------------------------ class icons */

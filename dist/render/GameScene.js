@@ -9,6 +9,7 @@ import { clampLevel, killScore } from '../sim/enemyLevels.js';
 import { summaryRows, sumPlayerStats } from '../sim/stats.js';
 import { HordeEngine } from '../sim/HordeEngine.js';
 import { UPGRADES, UPGRADE_ORDER } from '../sim/progression.js';
+import { colourOf, DEFAULT_COLOUR } from '../sim/palette.js';
 import { pickTarget } from '../sim/targeting.js';
 import { autopilotMove } from '../sim/autopilot.js';
 import { EnemyKind, FLAG_ABILITY, FLAG_DOWN, FLAG_FIRING } from '../types.js';
@@ -46,12 +47,30 @@ import { TEX } from './textures.js';
 export class GameScene extends Phaser.Scene {
     cfg;
     def;
+    /**
+     * This client's colour, after the room's clashes have been settled.
+     *
+     * Colour identifies the *player*, not the class — two people running the same
+     * program used to be two identical circles in a swarm of a hundred enemies.
+     * The resolved value can change under you when a lower id claims what you
+     * asked for, so it is re-read rather than captured once.
+     */
+    colourId = DEFAULT_COLOUR;
+    get tint() {
+        return colourOf(this.colourId).colour;
+    }
+    /** A teammate's settled colour: from presence where possible, their claim otherwise. */
+    remoteColour(state) {
+        const settled = this.cfg.room.resolvedColours()[state.id];
+        return colourOf(settled ?? state.colour).colour;
+    }
     player;
     playerAura;
     me = {
         id: '',
         name: '',
         cls: 'overclocker',
+        colour: DEFAULT_COLOUR,
         x: 0,
         y: 0,
         angle: 0,
@@ -179,10 +198,12 @@ export class GameScene extends Phaser.Scene {
     }
     create() {
         const { room, input, playerName, classId } = this.cfg;
+        this.colourId = room.colourId;
         this.me = {
             id: room.playerId,
             name: playerName,
             cls: classId,
+            colour: room.claimedColour,
             x: WORLD.width / 2 + (Math.random() - 0.5) * 240,
             y: WORLD.height / 2 + (Math.random() - 0.5) * 240,
             angle: 0,
@@ -209,12 +230,14 @@ export class GameScene extends Phaser.Scene {
         });
         this.playerAura = this.add
             .image(this.me.x, this.me.y, TEX.glow)
-            .setTint(this.def.colour)
+            .setTint(this.tint)
             // Normal, not additive: additive light over a white arena is a no-op.
             .setBlendMode(Phaser.BlendModes.NORMAL)
             .setScale(0.85)
             .setDepth(8);
-        this.player = this.add.image(this.me.x, this.me.y, TEX.player(classId)).setDepth(30);
+        this.player = this.add
+            .image(this.me.x, this.me.y, TEX.player(classId, this.colourId))
+            .setDepth(30);
         // Above the enemies, below the bullets.
         this.healthBars = this.add.graphics().setDepth(22);
         this.bulletTrails = this.add.graphics().setDepth(23);
@@ -336,6 +359,7 @@ export class GameScene extends Phaser.Scene {
     updateLocalPlayer(dt) {
         const { input } = this.cfg;
         this.syncMaxHealth();
+        this.syncColour();
         const cam = this.cameras.main;
         const screen = {
             x: (this.me.x - cam.worldView.x) * cam.zoom,
@@ -388,6 +412,22 @@ export class GameScene extends Phaser.Scene {
         this.me.flags =
             (intent.firing ? FLAG_FIRING : 0) | (this.time.now < this.abilityActiveUntil ? FLAG_ABILITY : 0);
         this.checkEnemyContact(dt);
+    }
+    /**
+     * Re-skin when this client's settled colour changes.
+     *
+     * It can change without the player touching anything: somebody with a lower
+     * id joins and claims what you asked for, and seniority hands it to them. The
+     * chassis colour is baked into the texture rather than tinted — see
+     * `drawPlayer` — so this is a texture swap, not a tint.
+     */
+    syncColour() {
+        const settled = this.cfg.room.colourId;
+        if (settled === this.colourId)
+            return;
+        this.colourId = settled;
+        this.player.setTexture(TEX.player(this.def.id, settled));
+        this.playerAura.setTint(this.tint);
     }
     /**
      * Carry Heap Expansion stacks into the live player.
@@ -462,7 +502,7 @@ export class GameScene extends Phaser.Scene {
             bullet.sprite
                 .setPosition(bullet.x, bullet.y)
                 .setRotation(a)
-                .setTint(this.def.colour)
+                .setTint(this.tint)
                 .setAlpha(1)
                 .setVisible(true);
         }
@@ -473,7 +513,7 @@ export class GameScene extends Phaser.Scene {
             this.outboundShots.push({ x: this.me.x, y: this.me.y, angle });
         }
         this.cfg.sfx.shoot(this.def.id);
-        this.fx.muzzleFlash(this.me.x + Math.cos(angle) * (this.def.radius + 10), this.me.y + Math.sin(angle) * (this.def.radius + 10), angle, this.def.colour);
+        this.fx.muzzleFlash(this.me.x + Math.cos(angle) * (this.def.radius + 10), this.me.y + Math.sin(angle) * (this.def.radius + 10), angle, this.tint);
         this.cameras.main.shake(60, 0.0016);
         this.cfg.input.triggerRumble(HAPTIC.shot.weak, HAPTIC.shot.strong, HAPTIC.shot.ms);
     }
@@ -491,13 +531,13 @@ export class GameScene extends Phaser.Scene {
         this.cfg.sfx.ability();
         switch (ability.kind) {
             case 'overclock':
-                this.fx.ring(this.me.x, this.me.y, 120, this.def.colour, 320);
+                this.fx.ring(this.me.x, this.me.y, 120, this.tint, 320);
                 this.cfg.onBanner('THERMAL RUNAWAY');
                 break;
             case 'shockwave': {
                 // Visual is immediate and local; the knockback is applied by whoever
                 // owns the horde, because enemy state is never edited off-host.
-                this.fx.ring(this.me.x, this.me.y, ability.radius, this.def.colour, 460);
+                this.fx.ring(this.me.x, this.me.y, ability.radius, this.tint, 460);
                 this.cameras.main.shake(220, 0.008);
                 this.broadcastField('shockwave', this.me.x, this.me.y, ability.radius, ability.durationSec);
                 break;
@@ -683,7 +723,7 @@ export class GameScene extends Phaser.Scene {
     onKilled() {
         this.deaths += 1;
         this.me.flags = FLAG_DOWN;
-        this.fx.enemyBurst(this.me.x, this.me.y, this.def.colour, 1.6);
+        this.fx.enemyBurst(this.me.x, this.me.y, this.tint, 1.6);
         this.cfg.sfx.died();
         if (!this.canReboot()) {
             this.declareGameOver();
@@ -892,7 +932,7 @@ export class GameScene extends Phaser.Scene {
             this.cameras.main.centerOn(spot.x, spot.y);
             this.cfg.onBanner('REBOOTED', 'Relocated clear of hostiles');
         }
-        this.fx.ring(this.me.x, this.me.y, 160, this.def.colour, 500);
+        this.fx.ring(this.me.x, this.me.y, 160, this.tint, 500);
         this.publishPlayerNow();
     }
     /* ----------------------------------------------------------- host duties */
@@ -1391,11 +1431,10 @@ export class GameScene extends Phaser.Scene {
                 .setVisible(true);
         };
         for (const remote of this.remotes.values()) {
-            const def = CLASSES[remote.state.cls] ?? CLASSES.overclocker;
             // A downed teammate is the one you most want to find, so they are not
             // hidden — just dimmed, the way their sprite is.
             const downed = (remote.state.flags & FLAG_DOWN) !== 0;
-            place(remote.state, def.colour, downed ? 0.45 : 0.95);
+            place(remote.state, this.remoteColour(remote.state), downed ? 0.45 : 0.95);
         }
         for (const powerUp of this.progression.powerUps.items) {
             if (powerUp.active)
@@ -1518,11 +1557,16 @@ export class GameScene extends Phaser.Scene {
     upsertRemote(state) {
         let remote = this.remotes.get(state.id);
         const def = CLASSES[state.cls] ?? CLASSES.overclocker;
+        const settled = this.cfg.room.resolvedColours()[state.id] ?? state.colour;
+        const swatch = colourOf(settled);
         if (!remote) {
-            const sprite = this.add.image(state.x, state.y, TEX.player(def.id)).setDepth(28).setAlpha(0.95);
+            const sprite = this.add
+                .image(state.x, state.y, TEX.player(def.id, swatch.id))
+                .setDepth(28)
+                .setAlpha(0.95);
             const aura = this.add
                 .image(state.x, state.y, TEX.glow)
-                .setTint(def.colour)
+                .setTint(swatch.colour)
                 .setBlendMode(Phaser.BlendModes.NORMAL)
                 .setScale(0.7)
                 .setDepth(7)
@@ -1531,11 +1575,11 @@ export class GameScene extends Phaser.Scene {
                 .text(state.x, state.y - 34, state.name, {
                 fontFamily: '"JetBrains Mono", monospace',
                 fontSize: '12px',
-                color: def.cssColour,
+                color: swatch.cssColour,
             })
                 .setOrigin(0.5)
                 .setDepth(29);
-            remote = { state, sprite, label, aura };
+            remote = { state, sprite, label, aura, swatch: '' };
             this.remotes.set(state.id, remote);
         }
         // Keep the render position; only the *target* comes from the network.
@@ -1543,8 +1587,15 @@ export class GameScene extends Phaser.Scene {
         remote.state = { ...state };
         remote.state.x = state.x;
         remote.state.y = state.y;
-        if (previous.cls !== state.cls)
-            remote.sprite.setTexture(TEX.player(def.id));
+        // Re-skinned on a change of either, because both can happen mid-run: the
+        // staging area edits a program, and a colour can be taken out from under a
+        // player by somebody with a lower id.
+        if (previous.cls !== state.cls || remote.swatch !== swatch.id) {
+            remote.swatch = swatch.id;
+            remote.sprite.setTexture(TEX.player(def.id, swatch.id));
+            remote.aura.setTint(swatch.colour);
+            remote.label.setColor(swatch.cssColour);
+        }
     }
     updateRemotes(deltaMs) {
         const t = smoothing(RENDER.remotePlayerLerp, deltaMs);
@@ -1616,6 +1667,7 @@ export class GameScene extends Phaser.Scene {
                 id: this.me.id,
                 name: this.me.name,
                 cls: this.me.cls,
+                colour: this.colourId,
                 hp: Math.round(this.me.hp),
                 maxHp: this.me.maxHp,
                 isSelf: true,
@@ -1627,6 +1679,7 @@ export class GameScene extends Phaser.Scene {
                 id,
                 name: remote.state.name,
                 cls: remote.state.cls,
+                colour: remote.swatch,
                 hp: Math.round(remote.state.hp),
                 maxHp: remote.state.maxHp,
                 isSelf: false,

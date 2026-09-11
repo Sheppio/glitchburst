@@ -116,12 +116,12 @@ const ui = new UI(uiRoot, settings, {
     void deploy(cls);
   },
 
-  onIdentity(name, cls) {
+  onIdentity(name, cls, colour) {
     lastClass = cls;
     // Re-read the roster straight away rather than waiting for the next
     // presence round trip: the edit is this client's own, and its row is drawn
     // from local state, so there is nothing to wait for.
-    room?.setIdentity(sanitizeName(name), cls);
+    room?.setIdentity(sanitizeName(name), cls, colour);
     if (ui.screen === 'lobby') ui.setLobby(lobbyRoster(), room?.isHost ?? false);
   },
 
@@ -233,7 +233,7 @@ async function deploy(cls: ClassId): Promise<void> {
   const name = sanitizeName(ui.callsign);
   ui.setConnectDetail('Joining room and resolving authority…');
 
-  room = new RoomSession(net, pendingRoomCode, playerId, name, cls);
+  room = new RoomSession(net, pendingRoomCode, playerId, name, cls, ui.colour);
   room.join();
 
   room.events.on('hostChange', ({ isHost, reason }) => {
@@ -284,10 +284,14 @@ async function deploy(cls: ClassId): Promise<void> {
 function lobbyRoster(): LobbyMember[] {
   const session = room;
   if (!session) return [];
+  // Settled, not asked for: every client runs the same resolver over the same
+  // presence list, so the roster agrees everywhere without a round trip.
+  const colours = session.resolvedColours();
   const me: LobbyMember = {
     id: playerId,
     name: sanitizeName(ui.callsign),
     cls: lastClass,
+    colour: colours[playerId] ?? ui.colour,
     isSelf: true,
     isHost: session.isHost,
   };
@@ -295,6 +299,7 @@ function lobbyRoster(): LobbyMember[] {
     id: peer.id,
     name: peer.name,
     cls: isClassId(peer.cls) ? peer.cls : 'overclocker',
+    colour: colours[peer.id] ?? peer.colour,
     isSelf: false,
     isHost: session.hostId === peer.id,
   }));

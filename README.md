@@ -1,6 +1,6 @@
 # GLITCHBURST
 
-<!-- version -->**v0.2.23**<!-- /version --> — the build currently on Pages.
+<!-- version -->**v0.2.24**<!-- /version --> — the build currently on Pages.
 
 A co-op top-down horde shooter that runs entirely in the browser. **No game server.**
 Every client talks to a public MQTT broker over WebSockets, and one of them
@@ -38,7 +38,7 @@ Developing needs the compiler:
 ```bash
 npm install
 npm run watch      # tsc --watch, rebuilding dist/ on save
-npm test           # 339 tests: simulation, codec, single client, mobile, controller, two clients
+npm test           # 356 tests: simulation, codec, single client, mobile, controller, two clients
 ```
 
 `dist/` is committed on purpose — it is what GitHub Pages serves.
@@ -427,6 +427,42 @@ squad list will reasonably conclude it did not work.
 Both the character screen's card grid and the staging area's picker write
 through one selection, so they cannot drift apart.
 
+### Colour is who, not what
+
+Colour used to mean class. That was fine while a class was the only thing
+distinguishing one chassis from another, and wrong the moment two people in a
+room picked the same program: two identical cyan circles in a swarm of a hundred
+enemies, and neither player able to tell which one they were driving.
+
+**Players pick their own colour from a palette of eight, and no two players in a
+room can wear the same one.** The room holds four, so a clash always has
+somewhere to go. The picker strikes out what the rest of the squad is already
+wearing, which is what stops clashes arising; the resolver below is what settles
+the ones that do.
+
+There is no server to arbitrate, so the rule has to be one every client can
+apply alone and arrive at the same answer — the same constraint the host
+election works under. Two properties do it:
+
+- **Seniority.** Claims are settled in ascending player id, and ids are
+  time-prefixed, so the earliest joiner keeps what they asked for and a newcomer
+  who picks a taken colour is the one who moves. Nobody's colour changes under
+  them because somebody else walked in.
+- **Determinism.** The displaced player takes the next free entry walking
+  forward from their choice, wrapping. No randomness and no negotiation, so
+  every client — including the displaced one — computes the same result from the
+  same presence list without a message being sent.
+
+A player's colour therefore rides on presence as a *claim*; what gets drawn is
+always the resolved answer. The claim is on the 20 Hz player packet too, purely
+as a fallback for a sprite that somehow appears before its presence does.
+
+The chassis colour is **baked into the texture, not tinted**: the sprite is
+mostly white — a white disc inside a coloured ring — and a tint multiplies the
+whole image, which would take the body down with the ring and leave a flat
+coloured blob. Four classes × eight colours is 32 small textures, generated once
+at boot, the same trade already made for the 42 enemy textures.
+
 Each roster row carries its **class glyph**. The in-game chassis cannot be
 reused for this: every class draws the same sprite and differs only in colour
 and radius, which is fine at arm's length in a moving arena and useless in a
@@ -436,7 +472,9 @@ inside: a beam leaving the muzzle and running off the edge for the Overclocker,
 three rays off the same muzzle for the Fireman, a second ring offset behind the
 first for the Glitcher's decoy, a cross inside the ring for the Encoder's field.
 Everything is stroked in `currentColor`, so the row sets the colour once and the
-glyph inherits it. The picker is a `select`
+glyph inherits it — and with colour now carrying player identity, the glyph is
+what carries the program. **Colour says who, the glyph says what.** The in-game
+squad bars wear both for the same reason. The picker is a `select`
 cycled **in place** by the pad: a native dropdown is drawn by the browser
 chrome, where a controller cannot reach, and opening one on a console is a dead
 end with no way back.
@@ -809,28 +847,28 @@ for a game — just don't build anything that needs privacy on top of it.
 npm test
 ```
 
-339 checks across five suites. The browser suites vendor Phaser locally and
+356 checks across five suites. The browser suites vendor Phaser locally and
 swap MQTT for a loopback stub that relays over `BroadcastChannel`, so two tabs
 share one "broker" and a real multi-client room can be tested offline.
 
-- **`sim.test.mjs`** (221) — codec round-trips, truncation tolerance, payload
+- **`sim.test.mjs`** (232) — codec round-trips, truncation tolerance, payload
   size at the cap, enemy cap, difficulty scaling, wave pacing, damage
   attribution, steering, decoy priority, host adoption, shockwave, progression
   and upgrade caps, deterministic drop rolls, turn-rate limiting, the auto-aim
   scoring formula, enemy levels and their health/reward curves, wave streaming
   and the tempo floor, the autopilot's steering bands and its survival against a
   live horde, and the audio volume curve.
-- **`smoke.test.mjs`** (48) — menus, settings persistence and migration, Phaser
+- **`smoke.test.mjs`** (49) — menus, settings persistence and migration, Phaser
   boot, election, 20 Hz batching, attacker-authority kills, point-blank hits,
   chip pickup and conversion, turn rate, abilities, pause, settings over a live
   match, and broadcast rate under a starved renderer.
-- **`gamepad.test.mjs`** (15) — the whole front end driven by a virtual pad and
+- **`gamepad.test.mjs`** (16) — the whole front end driven by a virtual pad and
   nothing else: no click, no keypress. Menu to match, the on-screen keyboard,
   the pause card, a slider, and back out again.
 - **`mobile.test.mjs`** (15) — an emulated Pixel with a touchscreen and no
   mouse: taps through the whole flow, and hit-tests that nothing invisible is
   covering the buttons.
-- **`multiplayer.test.mjs`** (40) — two clients: election, peer unpacking,
+- **`multiplayer.test.mjs`** (44) — two clients: election, peer unpacking,
   mid-game join, interpolation, squad scaling, seeing each other's fire, pause
   propagation, and **host failover** with the horde carried through.
 

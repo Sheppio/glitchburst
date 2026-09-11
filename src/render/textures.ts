@@ -1,13 +1,14 @@
 import * as Phaser from 'phaser';
 import { CLASSES, CLASS_ORDER } from '../sim/classes.js';
 import { UPGRADES, UPGRADE_ORDER } from '../sim/progression.js';
+import { PALETTE } from '../sim/palette.js';
 import type { UpgradeDef } from '../sim/progression.js';
 import { ENEMY_DEFS } from '../sim/enemyTypes.js';
 import { LEVEL_COLOURS, MAX_LEVEL } from '../sim/enemyLevels.js';
 import { EnemyKind } from '../types.js';
 
 export const TEX = {
-  player: (cls: string) => `tex-player-${cls}`,
+  player: (cls: string, colour: string) => `tex-player-${cls}-${colour}`,
   enemy: (kind: EnemyKind, level: number) => `tex-enemy-${kind}-${level}`,
   bullet: 'tex-bullet',
   enemyBullet: 'tex-enemy-bullet',
@@ -48,7 +49,15 @@ export function createTextures(scene: Phaser.Scene): void {
   drawVignette(scene);
   for (const id of UPGRADE_ORDER) drawPowerUp(scene, UPGRADES[id]);
 
-  for (const id of CLASS_ORDER) drawPlayer(scene, id, CLASSES[id].colour, CLASSES[id].radius);
+  // Every class in every player colour: 32 small textures. The colour is baked
+  // rather than tinted because the chassis is mostly *white* — a white disc
+  // inside a coloured ring — and a tint multiplies the whole image, which would
+  // take the body down with the ring and leave a flat coloured blob.
+  for (const id of CLASS_ORDER) {
+    for (const swatch of PALETTE) {
+      drawPlayer(scene, id, swatch.id, swatch.colour, CLASSES[id].radius);
+    }
+  }
 
   // Every kind at every level: 42 textures, drawn once at boot. The
   // alternative — one body sprite plus a tinted pip sprite per enemy — would
@@ -153,7 +162,13 @@ function drawBullets(scene: Phaser.Scene): void {
  * barrel and, worse, shifts the texture's centre away from the body, so the
  * sprite appears to orbit its own origin as it turns.
  */
-function drawPlayer(scene: Phaser.Scene, cls: string, colour: number, radius: number): void {
+function drawPlayer(
+  scene: Phaser.Scene,
+  cls: string,
+  swatch: string,
+  colour: number,
+  radius: number,
+): void {
   const barrelStart = radius - 3;
   const barrelLength = radius + 12;
   const reach = barrelStart + barrelLength;
@@ -183,7 +198,7 @@ function drawPlayer(scene: Phaser.Scene, cls: string, colour: number, radius: nu
 
   g.fillStyle(0xffffff, 0.9).fillCircle(c - radius * 0.25, c, radius * 0.3);
 
-  g.generateTexture(TEX.player(cls), size, size);
+  g.generateTexture(TEX.player(cls, swatch), size, size);
   g.destroy();
 }
 

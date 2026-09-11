@@ -21,6 +21,7 @@
 
 import { EnemyKind } from '../types.js';
 import { clampLevel, MAX_LEVEL } from '../sim/enemyLevels.js';
+import { DEFAULT_COLOUR } from '../sim/palette.js';
 import type { PlayerStats } from '../sim/stats.js';
 import type { Enemy, EnemySnapshot, FieldEffect, PlayerState } from '../types.js';
 
@@ -151,7 +152,11 @@ export function decodeEvents(payload: string): HordeEvent[] {
  * Player -> room, on that player's own topic. The player id is carried by the
  * topic, not the payload, so it is not repeated here.
  *
- *   name,cls,x,y,angle(centi-radians),hp,maxHp,flags
+ *   name,cls,x,y,angle(centi-radians),hp,maxHp,flags[,colour]
+ *
+ * `colour` is a trailing field so a client running an older build — Pages
+ * caches, and nobody reloads mid-session — still decodes, and simply appears in
+ * the default colour until it catches up.
  */
 export function encodePlayer(p: PlayerState): string {
   return [
@@ -163,6 +168,7 @@ export function encodePlayer(p: PlayerState): string {
     i(p.hp),
     i(p.maxHp),
     p.flags,
+    p.colour,
   ].join(FLD);
 }
 
@@ -179,6 +185,7 @@ export function decodePlayer(id: string, payload: string): PlayerState | null {
     hp: num(f[5]!),
     maxHp: num(f[6]!) || 100,
     flags: num(f[7]!),
+    colour: f[8] ?? DEFAULT_COLOUR,
     lastSeen: performance.now(),
   };
 }
@@ -233,16 +240,22 @@ export interface PresenceMsg {
   host: number;
   /** 0 means "I am leaving" (also delivered by the MQTT will on an ungraceful exit). */
   alive: number;
+  /** Palette id. What this player *asked* for — see `sim/palette.ts`. */
+  colour: string;
 }
 
 export function encodePresence(m: PresenceMsg): string {
-  return [sanitizeName(m.name), m.cls, m.host, m.alive].join(FLD);
+  return [sanitizeName(m.name), m.cls, m.host, m.alive, m.colour].join(FLD);
 }
 
 export function decodePresence(id: string, payload: string): PresenceMsg | null {
   const f = payload.split(FLD);
   if (f.length < 4) return null;
-  return { id, name: f[0]!, cls: f[1]!, host: num(f[2]!), alive: num(f[3]!) };
+  // Trailing, and defaulted: see `encodePlayer`.
+  return {
+    id, name: f[0]!, cls: f[1]!, host: num(f[2]!), alive: num(f[3]!),
+    colour: f[4] ?? DEFAULT_COLOUR,
+  };
 }
 
 /* ----------------------------------------------------------- run summary */

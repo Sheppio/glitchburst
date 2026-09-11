@@ -426,6 +426,48 @@ body.console-platform .console-banner { display: flex; }
 .lobby-identity .field { margin-bottom: 0; }
 .lobby-blurb { min-height: 17px; }
 
+/* Colour picker. A row of swatches rather than a select: the thing being
+   chosen *is* the colour, so naming it in a dropdown would be describing the
+   only information the control actually carries. */
+.colour-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.colour-swatch {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+  background: var(--swatch);
+  cursor: pointer;
+  padding: 0;
+  position: relative;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.colour-swatch:hover:not(:disabled) { transform: scale(1.1); }
+
+.colour-swatch[aria-pressed="true"] {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 3px var(--surface), 0 0 0 5px var(--swatch);
+}
+
+/* Taken by somebody else in the room. Still visible — knowing which colours
+   your squad is wearing is useful — but struck through and not selectable. */
+.colour-swatch:disabled {
+  cursor: not-allowed;
+  opacity: 0.32;
+}
+.colour-swatch:disabled::after {
+  content: '';
+  position: absolute;
+  inset: 45% -2px;
+  border-top: 2px solid var(--ink);
+  transform: rotate(-45deg);
+}
+
 .roster { display: grid; gap: 7px; margin: 20px 0 4px; }
 
 .roster-row {
@@ -448,6 +490,11 @@ body.console-platform .console-banner { display: flex; }
   flex: 0 0 auto;
 }
 .roster-icon .class-icon { width: 21px; height: 21px; display: block; }
+
+/* The in-game bars carry the glyph too, so a squad wearing four colours is
+   still readable as four programs. */
+.squad-icon { display: flex; color: var(--accent); flex: 0 0 auto; }
+.squad-icon .class-icon { width: 14px; height: 14px; display: block; }
 
 .roster-name { font-family: var(--mono); font-size: 13px; font-weight: 700; letter-spacing: 0.06em; }
 .roster-class { font-size: 11px; color: var(--ink-faint); margin-left: auto; }
@@ -697,7 +744,7 @@ body.console-platform .console-banner { display: flex; }
 
 .squad-row {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 8px;
   background: rgba(255, 255, 255, 0.9);

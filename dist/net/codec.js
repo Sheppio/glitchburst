@@ -19,6 +19,7 @@
  * respect. Packed, only level 7 needs a second character.
  */
 import { clampLevel, MAX_LEVEL } from '../sim/enemyLevels.js';
+import { DEFAULT_COLOUR } from '../sim/palette.js';
 const REC = ';';
 const FLD = ',';
 const EVT = '|';
@@ -135,7 +136,11 @@ export function decodeEvents(payload) {
  * Player -> room, on that player's own topic. The player id is carried by the
  * topic, not the payload, so it is not repeated here.
  *
- *   name,cls,x,y,angle(centi-radians),hp,maxHp,flags
+ *   name,cls,x,y,angle(centi-radians),hp,maxHp,flags[,colour]
+ *
+ * `colour` is a trailing field so a client running an older build — Pages
+ * caches, and nobody reloads mid-session — still decodes, and simply appears in
+ * the default colour until it catches up.
  */
 export function encodePlayer(p) {
     return [
@@ -147,6 +152,7 @@ export function encodePlayer(p) {
         i(p.hp),
         i(p.maxHp),
         p.flags,
+        p.colour,
     ].join(FLD);
 }
 export function decodePlayer(id, payload) {
@@ -163,6 +169,7 @@ export function decodePlayer(id, payload) {
         hp: num(f[5]),
         maxHp: num(f[6]) || 100,
         flags: num(f[7]),
+        colour: f[8] ?? DEFAULT_COLOUR,
         lastSeen: performance.now(),
     };
 }
@@ -199,13 +206,17 @@ export function decodeShots(payload) {
     return out;
 }
 export function encodePresence(m) {
-    return [sanitizeName(m.name), m.cls, m.host, m.alive].join(FLD);
+    return [sanitizeName(m.name), m.cls, m.host, m.alive, m.colour].join(FLD);
 }
 export function decodePresence(id, payload) {
     const f = payload.split(FLD);
     if (f.length < 4)
         return null;
-    return { id, name: f[0], cls: f[1], host: num(f[2]), alive: num(f[3]) };
+    // Trailing, and defaulted: see `encodePlayer`.
+    return {
+        id, name: f[0], cls: f[1], host: num(f[2]), alive: num(f[3]),
+        colour: f[4] ?? DEFAULT_COLOUR,
+    };
 }
 /* ----------------------------------------------------------- run summary */
 /** One client's own contribution to the group totals: `shots,chips,powerUps,reboots`. */

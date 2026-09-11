@@ -1,6 +1,7 @@
 import { BROKERS } from '../config.js';
 import { CLASSES, CLASS_ORDER, classDps, isClassId, weaponRange } from '../sim/classes.js';
 import { classIconSvg } from './classIcon.js';
+import { colourOf, DEFAULT_COLOUR, isColourId, PALETTE } from '../sim/palette.js';
 import { RANGES } from '../input/settings.js';
 import { VERSION } from '../version.js';
 /** 0.4 → "40%", 0 → "MUTED". Zero is worth spelling out; "0%" reads as a bug. */
@@ -37,6 +38,8 @@ const SLIDERS = [
 ];
 /** Where the player's callsign and last class are remembered between visits. */
 const CALLSIGN_KEY = 'glitchburst.callsign';
+/** Where the player's chosen colour is remembered between visits. */
+const COLOUR_KEY = 'glitchburst.colour';
 const CLASS_KEY = 'glitchburst.class';
 const TOGGLES = [
     {
@@ -97,6 +100,17 @@ function readStoredClass() {
     }
     return 'overclocker';
 }
+function readStoredColour() {
+    try {
+        const saved = localStorage.getItem(COLOUR_KEY);
+        if (saved && isColourId(saved))
+            return saved;
+    }
+    catch {
+        /* storage unavailable */
+    }
+    return DEFAULT_COLOUR;
+}
 export class UI {
     root;
     settings;
@@ -106,6 +120,13 @@ export class UI {
     selectedClass = readStoredClass();
     /** Debounce handle for presence announcements while a callsign is typed. */
     identityTimer = 0;
+    selectedColour = readStoredColour();
+    /**
+     * Colours already worn by somebody else in the room, so the picker can strike
+     * them out. Empty outside a room — on the character screen there is nobody to
+     * clash with yet.
+     */
+    takenColours = new Set();
     bannerTimer = 0;
     current = 'menu';
     /** Where "Done" goes back to. Settings is reachable from the menu and mid-match. */
@@ -127,6 +148,7 @@ export class UI {
         this.buildBrokerList();
         this.buildClassGrid();
         this.buildLobbyClasses();
+        this.buildColourGrids();
         // Both program controls start showing the stored choice, which until now
         // only the card grid reflected.
         this.selectClass(this.selectedClass);
@@ -155,6 +177,9 @@ export class UI {
     }
     get screen() {
         return this.current;
+    }
+    get colour() {
+        return this.selectedColour;
     }
     get callsign() {
         return this.input('input-callsign').value.trim() || 'ANON';
@@ -207,7 +232,7 @@ export class UI {
      */
     announceIdentity(now = false) {
         window.clearTimeout(this.identityTimer);
-        const send = () => this.callbacks.onIdentity(this.callsign, this.selectedClass);
+        const send = () => this.callbacks.onIdentity(this.callsign, this.selectedClass, this.selectedColour);
         if (now)
             send();
         else
@@ -296,6 +321,17 @@ export class UI {
      */
     setLobby(members, isHost) {
         const list = this.el('lobby-roster');
+        // Strike out what the rest of the squad is already wearing. The resolver in
+        // `sim/palette.ts` is the backstop for a genuine race; this is what stops
+        // the situation arising in the first place.
+        this.takenColours = new Set(members.filter((m) => !m.isSelf).map((m) => m.colour));
+        // Seniority can hand your choice to somebody else while you are looking at
+        // it, so the picker follows the settled answer rather than the asked-for one.
+        const mine = members.find((m) => m.isSelf);
+        if (mine && mine.colour !== this.selectedColour)
+            this.selectColour(mine.colour);
+        else
+            this.syncColourGrids();
         if (!members.length) {
             list.replaceChildren(Object.assign(document.createElement('p'), {
                 className: 'roster-empty',
@@ -307,7 +343,7 @@ export class UI {
                 const def = CLASSES[member.cls] ?? CLASSES.overclocker;
                 const row = document.createElement('div');
                 row.className = `roster-row${member.isHost ? ' is-host' : ''}`;
-                row.style.setProperty('--slot', def.cssColour);
+                row.style.setProperty('--slot', colourOf(member.colour).cssColour);
                 // The glyph inherits `--slot` through `currentColor`, so the row's
                 // accent colour is set once on the row and nowhere else.
                 const icon = document.createElement('span');
@@ -457,7 +493,7 @@ export class UI {
         const host = this.el('hud-squad');
         // Rebuilding four rows per frame is cheap, but touching the DOM when
         // nothing changed is not — so bail if the signature is identical.
-        const signature = squad.map((p) => `${p.id}:${p.hp}:${p.isHost}`).join('|');
+        const signature = squad.map((p) => `${p.id}:${p.hp}:${p.isHost}:${p.colour}:${p.cls}`).join('|');
         if (host.dataset['sig'] === signature)
             return;
         host.dataset['sig'] = signature;
@@ -465,7 +501,12 @@ export class UI {
             const def = CLASSES[p.cls] ?? CLASSES.overclocker;
             const row = document.createElement('div');
             row.className = `squad-row${p.isSelf ? ' is-self' : ''}${p.hp <= 0 ? ' is-down' : ''}`;
-            row.style.setProperty('--accent', def.cssColour);
+            // Colour is the player, not the program — it has to match the chassis
+            // they are looking at in the arena, or the bar belongs to nobody.
+            row.style.setProperty('--accent', colourOf(p.colour).cssColour);
+            const icon = document.createElement('span');
+            icon.className = 'squad-icon';
+            icon.innerHTML = classIconSvg(def.id);
             const name = document.createElement('span');
             name.className = 'squad-name';
             name.textContent = p.name;
@@ -479,7 +520,7 @@ export class UI {
             const hp = document.createElement('span');
             hp.className = 'squad-hp';
             hp.textContent = `${p.hp}/${p.maxHp}`;
-            row.append(name, hp);
+            row.append(icon, name, hp);
             return row;
         }));
     }
@@ -580,6 +621,57 @@ export class UI {
      * implementations — the navigator cycles it in place rather than opening the
      * native popup, which is exactly the cycling behaviour wanted here.
      */
+    /**
+     * Two pickers, one choice — the same arrangement as the program grid and the
+     * program select, and for the same reason.
+     */
+    buildColourGrids() {
+        for (const where of ['class', 'lobby']) {
+            const grid = this.el(`colour-grid-${where}`);
+            grid.replaceChildren(...PALETTE.map((swatch) => {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'colour-swatch';
+                button.style.setProperty('--swatch', swatch.cssColour);
+                button.dataset['colour'] = swatch.id;
+                button.setAttribute('aria-label', swatch.name);
+                button.setAttribute('aria-pressed', 'false');
+                button.addEventListener('click', () => {
+                    if (button.disabled)
+                        return;
+                    this.sfx.click();
+                    this.selectColour(swatch.id);
+                    this.announceIdentity(true);
+                });
+                return button;
+            }));
+        }
+        this.selectColour(this.selectedColour);
+    }
+    selectColour(id) {
+        this.selectedColour = isColourId(id) ? id : DEFAULT_COLOUR;
+        try {
+            localStorage.setItem(COLOUR_KEY, this.selectedColour);
+        }
+        catch {
+            /* storage unavailable — the choice simply will not survive a reload */
+        }
+        this.syncColourGrids();
+    }
+    syncColourGrids() {
+        for (const button of this.root.querySelectorAll('.colour-swatch')) {
+            const id = button.dataset['colour'] ?? '';
+            const taken = this.takenColours.has(id) && id !== this.selectedColour;
+            button.setAttribute('aria-pressed', String(id === this.selectedColour));
+            button.disabled = taken;
+            // Skipped by the pad as well as the pointer, so a controller cannot land
+            // the ring on a swatch that refuses to be chosen.
+            button.toggleAttribute('data-nav-skip', taken);
+        }
+        for (const where of ['class', 'lobby']) {
+            this.text(`colour-name-${where}`, colourOf(this.selectedColour).name);
+        }
+    }
     buildLobbyClasses() {
         const select = this.el('select-lobby-class');
         select.replaceChildren(...CLASS_ORDER.map((id) => {

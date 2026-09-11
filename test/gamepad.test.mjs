@@ -163,6 +163,46 @@ await step('the program cycles in place from the pad', async () => {
   };
 });
 
+await step('a colour can be picked with the pad', async () => {
+  const before = await page.evaluate(() => window.glitchburst.room.claimedColour);
+
+  // The swatches carry no id — they are a row of colours, not named controls —
+  // so this walks the ring by what is focused rather than by `focusOn`.
+  const onSwatch = () => page.evaluate(
+    () => document.activeElement?.dataset?.colour ?? null,
+  );
+
+  let reached = null;
+  for (let i = 0; i < 30 && !reached; i++) {
+    await press(BTN.DOWN);
+    reached = await onSwatch();
+  }
+  // Walk along the row to one that is not already selected, or pressing A
+  // would re-pick the colour the player already has and prove nothing.
+  for (let i = 0; i < 8 && reached === before; i++) {
+    await press(BTN.RIGHT);
+    reached = await onSwatch();
+  }
+
+  await press(BTN.A);
+  await page.waitForTimeout(200);
+
+  const after = await page.evaluate(() => ({
+    claimed: window.glitchburst.room.claimedColour,
+    pressed: document.querySelector('#colour-grid-lobby .colour-swatch[aria-pressed="true"]')
+      ?.dataset.colour,
+    chassis: window.glitchburst.game?.scene.getScene('game')?.player?.texture?.key ?? null,
+  }));
+
+  return {
+    ok: Boolean(reached) && reached !== before && after.claimed === reached &&
+      after.pressed === reached,
+    note: reached
+      ? `${before} → ${after.claimed} (swatch ${reached}, ring landed by direction alone)`
+      : 'the ring never reached a swatch',
+  };
+});
+
 await step('down alone reaches every control in the staging area', async () => {
   // The ring is placed by geometry, and geometry has a way of quietly stranding
   // things. A full-width field above a two-button row is directly above both of

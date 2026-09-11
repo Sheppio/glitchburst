@@ -2,6 +2,7 @@ import { HORDE, NET } from '../config.js';
 import type { ClassId, PlayerId, RoomId } from '../types.js';
 import { Emitter } from '../util.js';
 import { decodeHeartbeat, decodePresence, encodeHeartbeat, encodePresence } from './codec.js';
+import { DEFAULT_COLOUR, resolveColours } from '../sim/palette.js';
 import type { HeartbeatStats } from './codec.js';
 import type { MqttNet } from './MqttNet.js';
 import { Topics, segment } from './topics.js';
@@ -10,6 +11,8 @@ export interface PeerRecord {
   id: PlayerId;
   name: string;
   cls: string;
+  /** Palette id this peer asked for; `resolvedColours` settles the clashes. */
+  colour: string;
   claimsHost: boolean;
   lastSeen: number;
 }
@@ -90,6 +93,7 @@ export class RoomSession {
     readonly playerId: PlayerId,
     private name: string,
     private cls: ClassId,
+    private colour: string = DEFAULT_COLOUR,
   ) {}
 
   get hostId(): PlayerId | null {
@@ -124,11 +128,36 @@ export class RoomSession {
    * to de-list this client on a crash, which the id does — the name and class
    * in it are never read for anything.
    */
-  setIdentity(name: string, cls: ClassId): void {
-    if (name === this.name && cls === this.cls) return;
+  setIdentity(name: string, cls: ClassId, colour: string = this.colour): void {
+    if (name === this.name && cls === this.cls && colour === this.colour) return;
     this.name = name;
     this.cls = cls;
+    this.colour = colour;
     this.announcePresence();
+  }
+
+  /** What this client asked for, before the room's clashes are settled. */
+  get claimedColour(): string {
+    return this.colour;
+  }
+
+  /**
+   * Who ends up wearing what, across the whole room.
+   *
+   * Computed from presence on every client rather than agreed between them —
+   * see `resolveColours`. Recomputed on demand rather than cached: the roster
+   * changes from three different events and a stale colour map is the kind of
+   * bug that only shows up with three people in a room.
+   */
+  resolvedColours(): Record<PlayerId, string> {
+    const claims = [{ id: this.playerId, colour: this.colour }];
+    for (const peer of this.peers.values()) claims.push({ id: peer.id, colour: peer.colour });
+    return resolveColours(claims);
+  }
+
+  /** This client's colour after clashes are settled. */
+  get colourId(): string {
+    return this.resolvedColours()[this.playerId] ?? this.colour;
   }
 
   join(): void {
@@ -139,7 +168,10 @@ export class RoomSession {
     // immediately instead of waiting out the presence timeout.
     this.net.setWill(
       Topics.presence(this.roomId, this.playerId),
-      encodePresence({ id: this.playerId, name: this.name, cls: this.cls, host: 0, alive: 0 }),
+      encodePresence({
+        id: this.playerId, name: this.name, cls: this.cls,
+        colour: this.colour, host: 0, alive: 0,
+      }),
     );
 
     this.unsubs.push(
@@ -169,7 +201,10 @@ export class RoomSession {
     this.joined = false;
     this.net.publish(
       Topics.presence(this.roomId, this.playerId),
-      encodePresence({ id: this.playerId, name: this.name, cls: this.cls, host: 0, alive: 0 }),
+      encodePresence({
+        id: this.playerId, name: this.name, cls: this.cls,
+        colour: this.colour, host: 0, alive: 0,
+      }),
     );
     for (const t of this.timers) window.clearInterval(t);
     this.timers = [];
@@ -188,6 +223,7 @@ export class RoomSession {
         id: this.playerId,
         name: this.name,
         cls: this.cls,
+        colour: this.colour,
         host: this._isHost ? 1 : 0,
         alive: 1,
       }),
@@ -214,6 +250,7 @@ export class RoomSession {
       id,
       name: msg.name,
       cls: msg.cls,
+      colour: msg.colour,
       claimsHost: msg.host === 1,
       lastSeen: performance.now(),
     };
