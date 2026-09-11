@@ -884,7 +884,7 @@ export class GameScene extends Phaser.Scene {
       } else if (event.t === 'wave') {
         this.lastWave = event.n;
         this.cfg.sfx.wave();
-        this.cfg.onBanner(`WAVE ${event.n}`, `${event.size} hostile processes spawned`);
+        this.cfg.onBanner(`WAVE ${event.n}`, `${event.size} hostile processes incoming`);
       }
     }
     for (const kill of result.kills) {
@@ -1103,7 +1103,7 @@ export class GameScene extends Phaser.Scene {
           if (!this.horde) {
             this.lastWave = event.n;
             this.cfg.sfx.wave();
-            this.cfg.onBanner(`WAVE ${event.n}`, `${event.size} hostile processes spawned`);
+            this.cfg.onBanner(`WAVE ${event.n}`, `${event.size} hostile processes incoming`);
           }
           break;
       }

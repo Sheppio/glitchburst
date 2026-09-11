@@ -30,6 +30,11 @@ export class HordeEngine {
     clock = 0;
     /** Seconds since the current wave landed. */
     sinceWave = 0;
+    /** Enemies of the current wave still waiting to be released. */
+    spawnQueue = 0;
+    /** Seconds between releases while a wave streams in. */
+    spawnEvery = 0;
+    sinceSpawn = 0;
     wave = 0;
     pending = new Map();
     grid = new Map();
@@ -73,6 +78,8 @@ export class HordeEngine {
         this.roster = [EnemyKind.GlitchBug];
         this.lastWaveSize = 0;
         this.sinceWave = 0;
+        this.spawnQueue = 0;
+        this.sinceSpawn = 0;
         this.nextId = 1;
     }
     /**
@@ -120,6 +127,11 @@ export class HordeEngine {
             : HORDE.firstWaveDelaySec;
         this.lastWaveSize = this.enemies.size;
         this.sinceWave = 0;
+        // Whatever the old host had queued is not knowable from a snapshot, and
+        // guessing would either double-spawn a wave or strand one. The adopted
+        // field is treated as the whole wave.
+        this.spawnQueue = 0;
+        this.sinceSpawn = 0;
     }
     /**
      * Attacker-authority damage (requirement 4). Any client may report a hit; the
@@ -258,12 +270,47 @@ export class HordeEngine {
     intervalFor(size) {
         return Math.max(HORDE.waveMinIntervalSec, HORDE.waveBaseIntervalSec + size * HORDE.wavePerEnemySec);
     }
+    /**
+     * Release whatever the current wave still owes, a few at a time.
+     *
+     * A `while` rather than an `if`: the host steps at a fixed 20 Hz but a
+     * browser that has been throttled or stalled hands back a large `dt`, and a
+     * wave must not silently lose its tail because several release slots elapsed
+     * inside one step.
+     */
+    releaseQueued(dt, targets) {
+        if (this.spawnQueue <= 0)
+            return;
+        this.sinceSpawn += dt;
+        if (this.spawnEvery <= 0) {
+            while (this.spawnQueue > 0)
+                this.releaseOne(targets);
+            return;
+        }
+        while (this.spawnQueue > 0 && this.sinceSpawn >= this.spawnEvery) {
+            this.sinceSpawn -= this.spawnEvery;
+            this.releaseOne(targets);
+        }
+    }
+    releaseOne(targets) {
+        this.spawnQueue -= 1;
+        // The kind is rolled at release rather than at wave start: same roster,
+        // same weighting, one less thing to carry in a queue.
+        this.spawn(this.rollKind(), targets);
+    }
     advanceWaves(dt, targets, result) {
+        this.releaseQueued(dt, targets);
         this.waveTimer -= dt;
         this.sinceWave += dt;
         // Clearing the field pulls the next wave forward, subject to a floor — so
         // skill is rewarded with tempo rather than with waiting around.
-        const cleared = this.lastWaveSize > 0 &&
+        //
+        // Never while the wave is still streaming in: an empty field mid-stream
+        // means you killed the first arrival, not that you cleared the wave, and
+        // treating it as a clear would summon the next one on top of the rest of
+        // this one.
+        const cleared = this.spawnQueue === 0 &&
+            this.lastWaveSize > 0 &&
             this.enemies.size <= Math.max(2, Math.round(this.lastWaveSize * HORDE.waveClearFraction)) &&
             this.sinceWave >= HORDE.waveMinIntervalSec;
         if (this.waveTimer > 0 && !cleared)
@@ -274,13 +321,21 @@ export class HordeEngine {
         const want = this.waveSize;
         const room = HORDE.maxEnemies - this.enemies.size;
         const size = Math.max(0, Math.min(want, room));
-        for (let n = 0; n < size; n++)
-            this.spawn(this.rollKind(), targets);
         // The timer is set from the wave actually spawned, not the one requested:
         // near the enemy cap a wave can be trimmed, and it should not then be
         // granted time for enemies that were never created.
         this.lastWaveSize = size;
         this.waveTimer = this.intervalFor(size);
+        // Stream the wave in across a fraction of its own window instead of
+        // dropping it on the player in one frame.
+        this.spawnQueue = size;
+        this.sinceSpawn = 0;
+        this.spawnEvery =
+            size > 1 ? (this.waveTimer * HORDE.waveSpawnFraction) / (size - 1) : 0;
+        // The first arrival is immediate. A wave banner over an empty arena reads
+        // as a bug rather than as a reprieve.
+        if (this.spawnQueue > 0)
+            this.releaseOne(targets);
         result.events.push({ t: 'wave', n: this.wave, size });
     }
     /**

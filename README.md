@@ -1,6 +1,6 @@
 # GLITCHBURST
 
-<!-- version -->**v0.2.10**<!-- /version --> — the build currently on Pages.
+<!-- version -->**v0.2.11**<!-- /version --> — the build currently on Pages.
 
 A co-op top-down horde shooter that runs entirely in the browser. **No game server.**
 Every client talks to a public MQTT broker over WebSockets, and one of them
@@ -38,7 +38,7 @@ Developing needs the compiler:
 ```bash
 npm install
 npm run watch      # tsc --watch, rebuilding dist/ on save
-npm test           # 221 tests: simulation, codec, single client, mobile, two clients
+npm test           # 228 tests: simulation, codec, single client, mobile, two clients
 ```
 
 `dist/` is committed on purpose — it is what GitHub Pages serves.
@@ -356,12 +356,35 @@ Required DPS then grows roughly linearly, and the game responds to how you are
 actually doing: play well and waves come faster (and so do chips), struggle and
 the full window is there to recover in.
 
+### Waves stream in
+
+A wave does not land as a block. Its spawns are spread across **40% of its own
+window**, so the wave builds instead of arriving.
+
+Dropping thirty enemies into existence in a single frame closes the ring around
+the player instantly, and there is no moment where they are reacting to
+anything — they are simply surrounded. Streamed, the same wave is pressure that
+grows, which can be read and fallen back from. Wave one opens with a single
+enemy and reaches eleven about six seconds later, leaving most of its window to
+fight in.
+
+A fraction rather than a fixed rate keeps the stream proportional: a wave of
+eighty gets a longer window and therefore a longer trickle, not eighty enemies
+crammed into the same six seconds.
+
+The early-clear rule needs a guard because of this. An empty field *while a wave
+is still arriving* means the player killed the leading edge, not that they
+cleared the wave — advancing there would drop the next wave on top of the rest
+of this one, which is the exact pile-on the streaming exists to prevent. So the
+next wave can only be pulled forward once the current one has fully landed.
+
 ## Difficulty (1–4 players)
 
 Two independent dials, applied per wave from the live roster:
 
 - **Wave size** × `1 + 0.45 × (players − 1)` → 1.0× solo, **2.35× at four**.
-- **Enemy health** × `1 + 0.12 × (players − 1)`, plus 9% per wave. Deliberately
+- **Enemy health** × `1 + 0.12 × (players − 1)`, plus 4% per wave on top of the
+  level multiplier. Deliberately
   gentle: pushed harder it would punish the squad for grouping up, which is the
   opposite of what co-op should reward. Solo gets a further 10% discount.
 
@@ -501,16 +524,16 @@ for a game — just don't build anything that needs privacy on top of it.
 npm test
 ```
 
-221 checks across four suites. The browser suites vendor Phaser locally and
+228 checks across four suites. The browser suites vendor Phaser locally and
 swap MQTT for a loopback stub that relays over `BroadcastChannel`, so two tabs
 share one "broker" and a real multi-client room can be tested offline.
 
-- **`sim.test.mjs`** (136) — codec round-trips, truncation tolerance, payload
+- **`sim.test.mjs`** (143) — codec round-trips, truncation tolerance, payload
   size at the cap, enemy cap, difficulty scaling, wave pacing, damage
   attribution, steering, decoy priority, host adoption, shockwave, progression
   and upgrade caps, deterministic drop rolls, turn-rate limiting, the auto-aim
-  scoring formula, enemy levels and their health/reward curves, and the audio
-  volume curve.
+  scoring formula, enemy levels and their health/reward curves, wave streaming
+  and the tempo floor, and the audio volume curve.
 - **`smoke.test.mjs`** (38) — menus, settings persistence and migration, Phaser
   boot, election, 20 Hz batching, attacker-authority kills, point-blank hits,
   chip pickup and conversion, turn rate, abilities, pause, settings over a live

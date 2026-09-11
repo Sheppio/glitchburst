@@ -67,6 +67,20 @@ export const HORDE = {
      * arena is dead time, not difficulty.
      */
     waveClearFraction: 0.22,
+    /**
+     * Fraction of a wave's window its spawns are spread across.
+     *
+     * A wave arriving as one instantaneous block is jarring: thirty enemies pop
+     * into existence at once, the ring around you closes in a single frame, and
+     * there is no moment where you are reacting to anything — you are simply
+     * surrounded. Streaming them in over part of the window turns the same wave
+     * into pressure that builds, which you can read and fall back from.
+     *
+     * A fraction rather than a fixed rate, so the stream stays proportional: a
+     * wave of eighty gets a longer window and therefore a longer trickle, not
+     * eighty enemies crammed into the same six seconds.
+     */
+    waveSpawnFraction: 0.4,
     /** Grace period before the first wave of a fresh room. */
     firstWaveDelaySec: 4,
     baseWaveSize: 8,

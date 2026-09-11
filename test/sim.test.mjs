@@ -112,8 +112,11 @@ const run = (engine, seconds, t = targets(1)) => {
 {
   const solo = new HordeEngine();
   const squad = new HordeEngine();
-  run(solo, 5, targets(1));
-  run(squad, 5, targets(4));
+  // Long enough for wave 1 to finish streaming in on both, and short enough
+  // that wave 2 has not started on either. Counting the field a second after
+  // the wave lands would now measure the drip rate, not the wave size.
+  run(solo, 15, targets(1));
+  run(squad, 15, targets(4));
   check('a four-player squad faces a bigger wave than a solo player',
     squad.enemyCount > solo.enemyCount * 1.8,
     `solo ${solo.enemyCount} → squad ${squad.enemyCount} (${(squad.enemyCount / solo.enemyCount).toFixed(2)}x)`);
@@ -635,20 +638,101 @@ const run = (engine, seconds, t = targets(1)) => {
 }
 
 {
-  // Clearing the field pulls the next wave forward, so skill buys tempo.
+  // A wave arrives as a stream, not as a block. This is the whole point: thirty
+  // enemies appearing in one frame closes the ring around the player with
+  // nothing to react to.
   const engine = new HordeEngine();
-  run(engine, 5, targets(1));
+  const size = HORDE.baseWaveSize + HORDE.waveGrowth;
+  const window = HORDE.waveBaseIntervalSec + size * HORDE.wavePerEnemySec;
+
+  run(engine, HORDE.firstWaveDelaySec + 0.05, targets(1));
+  const onLanding = engine.enemyCount;
+
+  const samples = [onLanding];
+  const step = 0.5;
+  let elapsed = 0;
+  while (engine.enemyCount < size && elapsed < window) {
+    run(engine, step, targets(1));
+    elapsed += step;
+    samples.push(engine.enemyCount);
+  }
+
+  check('the wave does not land as a block', onLanding <= 2,
+    `${onLanding} of ${size} present the moment the banner fires`);
+  check('the rest arrive over time', engine.enemyCount === size,
+    `${samples.join(' → ')}`);
+  check('arrivals only ever go up', samples.every((v, i, a) => i === 0 || v >= a[i - 1]));
+  check('the stream spans roughly the configured fraction of the window',
+    elapsed > window * HORDE.waveSpawnFraction * 0.7 && elapsed < window * HORDE.waveSpawnFraction * 1.4,
+    `${elapsed.toFixed(1)}s to land ${size}, against a ${(window * HORDE.waveSpawnFraction).toFixed(1)}s target`);
+  check('a streamed wave still fits well inside its own window', elapsed < window * 0.6,
+    `${elapsed.toFixed(1)}s of a ${window.toFixed(1)}s window spent arriving`);
+}
+
+{
+  // Clearing the field pulls the next wave forward, so skill buys tempo — but
+  // only once the wave has actually all arrived.
+  const engine = new HordeEngine();
+  run(engine, 15, targets(1));
   const waveAfterFirst = engine.waveNumber;
   const size = engine.enemyCount;
   engine.enemies.clear();
 
-  run(engine, 1, targets(1));
-  check('a cleared field does not skip the minimum gap', engine.waveNumber === waveAfterFirst,
-    `still wave ${engine.waveNumber} after 1s`);
+  run(engine, 0.5, targets(1));
+  check('clearing a fully arrived wave pulls the next one forward', engine.waveNumber > waveAfterFirst,
+    `wave ${engine.waveNumber} arrived early into a ${(HORDE.waveBaseIntervalSec + size * HORDE.wavePerEnemySec).toFixed(0)}s window`);
+}
 
+{
+  // The counterpart, and the reason the guard exists: an empty field while the
+  // wave is still streaming means you killed the first arrivals, not that you
+  // cleared it. Treating that as a clear would drop the next wave on top of
+  // the rest of this one — the exact pile-on the streaming is meant to end.
+  // Derived from the config rather than hardcoded, so retuning the pacing
+  // retunes the test instead of breaking it.
+  const size = HORDE.baseWaveSize + HORDE.waveGrowth;
+  const window = HORDE.waveBaseIntervalSec + size * HORDE.wavePerEnemySec;
+  const streamEnds = HORDE.firstWaveDelaySec + window * HORDE.waveSpawnFraction;
+  const stopAt = streamEnds - 0.8;
+  const oldWouldAdvanceAt = HORDE.firstWaveDelaySec + HORDE.waveMinIntervalSec;
+
+  // The test only means anything if it runs past the point the old code would
+  // have advanced. If the pacing is ever retuned so the stream is shorter than
+  // the minimum gap, this says so instead of passing vacuously.
+  check('the streaming window outlasts the minimum gap, so this test bites',
+    stopAt > oldWouldAdvanceAt,
+    `clearing until ${stopAt.toFixed(1)}s, past the ${oldWouldAdvanceAt.toFixed(1)}s the old early-clear needed`);
+
+  const engine = new HordeEngine();
   run(engine, 5, targets(1));
-  check('clearing the field pulls the next wave forward', engine.waveNumber > waveAfterFirst,
-    `wave ${engine.waveNumber} arrived early, ~6s into a ${(HORDE.waveBaseIntervalSec + size * HORDE.wavePerEnemySec).toFixed(0)}s window`);
+  const wave = engine.waveNumber;
+  const arrivedSoFar = engine.enemyCount;
+
+  for (let i = 0; i < (stopAt - 5) * 60; i++) {
+    engine.step(1 / 60, targets(1));
+    engine.enemies.clear();
+  }
+  check('killing the leading edge of a wave does not summon the next one',
+    engine.waveNumber === wave,
+    `still wave ${engine.waveNumber} after clearing continuously (${arrivedSoFar} of ${size} had landed at 5s)`);
+}
+
+{
+  // The tempo floor, tested as the invariant it actually is: no matter how
+  // fast the field is cleared, waves never stack up back to back.
+  const engine = new HordeEngine();
+  const stamps = [];
+  let t = 0;
+  for (let i = 0; i < 150 * 60; i++) {
+    const { events } = engine.step(1 / 60, targets(1));
+    t += 1 / 60;
+    for (const e of events) if (e.t === 'wave') stamps.push(t);
+    engine.enemies.clear();
+  }
+  const gaps = stamps.slice(1).map((v, i) => v - stamps[i]);
+  check('waves never come closer together than the minimum gap',
+    gaps.length > 3 && gaps.every((g) => g >= HORDE.waveMinIntervalSec - 0.05),
+    `${gaps.length} waves, tightest gap ${Math.min(...gaps).toFixed(1)}s against a ${HORDE.waveMinIntervalSec}s floor`);
 }
 
 {
