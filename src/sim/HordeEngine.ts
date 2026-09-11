@@ -3,7 +3,7 @@ import { EnemyKind } from '../types.js';
 import type { AiTarget, Enemy, EnemyId } from '../types.js';
 import { clamp, counterId, dist2 } from '../util.js';
 import { ALL_KINDS, ENEMY_DEFS } from './enemyTypes.js';
-import { clampLevel, levelHealthScale, levelRewardScale, rollLevel } from './enemyLevels.js';
+import { clampLevel, killScore, levelHealthScale, rollLevel } from './enemyLevels.js';
 import type { HordeEvent } from '../net/codec.js';
 
 interface PendingDamage {
@@ -275,13 +275,15 @@ export class HordeEngine {
       if (e.hp <= 0) {
         this.enemies.delete(id);
         const def = ENEMY_DEFS[e.kind];
-        result.events.push({ t: 'death', id: e.id, x: e.x, y: e.y, kind: e.kind, level: e.level });
+        result.events.push({
+          t: 'death', id: e.id, x: e.x, y: e.y, kind: e.kind, level: e.level, attacker: dmg.attacker,
+        });
         result.kills.push({
           id: e.id,
           kind: e.kind,
           x: e.x,
           y: e.y,
-          score: Math.round(def.score * levelRewardScale(e.level)),
+          score: killScore(def.score, e.level),
           attacker: dmg.attacker,
         });
 

@@ -79,7 +79,10 @@ export function encodeEvents(events) {
     for (const e of events) {
         switch (e.t) {
             case 'death':
-                parts.push(`D:${e.id},${i(e.x)},${i(e.y)},${e.kind},${clampLevel(e.level)}`);
+                // The attacker rides along so every client can score its own kills.
+                // The host is the only machine that *resolves* a kill, but it is not
+                // the only one that needs to know whose it was — see `killEnemyView`.
+                parts.push(`D:${e.id},${i(e.x)},${i(e.y)},${e.kind},${clampLevel(e.level)},${e.attacker}`);
                 break;
             case 'shot':
                 parts.push(`P:${e.id},${i(e.x)},${i(e.y)},${i(e.vx)},${i(e.vy)},${i(e.damage)}`);
@@ -111,6 +114,7 @@ export function decodeEvents(payload) {
                 y: num(f[2]),
                 kind: num(f[3]),
                 level: f.length >= 5 ? clampLevel(num(f[4])) : 1,
+                attacker: f[5] ?? '',
             });
         }
         else if (tag === 'P' && f.length >= 6) {

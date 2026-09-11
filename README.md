@@ -1,6 +1,6 @@
 # GLITCHBURST
 
-<!-- version -->**v0.2.13**<!-- /version --> — the build currently on Pages.
+<!-- version -->**v0.2.14**<!-- /version --> — the build currently on Pages.
 
 A co-op top-down horde shooter that runs entirely in the browser. **No game server.**
 Every client talks to a public MQTT broker over WebSockets, and one of them
@@ -38,7 +38,7 @@ Developing needs the compiler:
 ```bash
 npm install
 npm run watch      # tsc --watch, rebuilding dist/ on save
-npm test           # 242 tests: simulation, codec, single client, mobile, two clients
+npm test           # 245 tests: simulation, codec, single client, mobile, two clients
 ```
 
 `dist/` is committed on purpose — it is what GitHub Pages serves.
@@ -147,6 +147,15 @@ mutating directly, so there is one code path, not two.
 
 Healing follows the same logic in reverse: the Encoder's field is broadcast, and
 each client heals *itself* while standing in it.
+
+**Scoring rides on the death event**, which is the subtle half. The host is the
+only machine that *resolves* a kill, but it is not the only one that needs to
+know whose it was: crediting from the host's own step result means a peer's
+kills are credited on a machine that is not the peer, and a peer's score never
+leaves zero however much it kills. So the attacker's id goes out with the death
+event, and every client scores its own kills off the broadcast — the same event
+that already plays the burst and drops the chips, so a kill is observed in
+exactly one place on the host and on peers alike.
 
 ### Lag compensation
 
@@ -325,6 +334,15 @@ you grind until bored rather than losing.
 *somebody* is still standing, and a **wipe** is what ends the run. The pressure
 comes from your friends rather than from a token count, and it makes the last
 player alive obviously important.
+
+A wipe is a property of the **room**, and is re-checked every frame while you
+are down rather than only at the instant you die. Asking once, on death, made
+the run end at different times on different clients: whoever died second saw no
+one standing and ended, while the first player — merely *rebooting*, not out —
+served their reboot, came back, and only discovered the wipe the next time they
+died, fifteen seconds later. Re-checked continuously, every client reaches the
+same answer within one player broadcast, and the failure screen appears on all
+of them together.
 
 A reboot restores **full** health. A partial one drops you straight back into
 the wave that just killed you, which usually spends the next life on nothing.
@@ -589,7 +607,7 @@ for a game — just don't build anything that needs privacy on top of it.
 npm test
 ```
 
-242 checks across four suites. The browser suites vendor Phaser locally and
+245 checks across four suites. The browser suites vendor Phaser locally and
 swap MQTT for a loopback stub that relays over `BroadcastChannel`, so two tabs
 share one "broker" and a real multi-client room can be tested offline.
 
@@ -607,7 +625,7 @@ share one "broker" and a real multi-client room can be tested offline.
 - **`mobile.test.mjs`** (14) — an emulated Pixel with a touchscreen and no
   mouse: taps through the whole flow, and hit-tests that nothing invisible is
   covering the buttons.
-- **`multiplayer.test.mjs`** (33) — two clients: election, peer unpacking,
+- **`multiplayer.test.mjs`** (36) — two clients: election, peer unpacking,
   mid-game join, interpolation, squad scaling, seeing each other's fire, pause
   propagation, and **host failover** with the horde carried through.
 

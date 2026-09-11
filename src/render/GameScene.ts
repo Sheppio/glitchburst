@@ -25,7 +25,7 @@ import { Topics, segment } from '../net/topics.js';
 import { CLASSES, classDps } from '../sim/classes.js';
 import type { ClassDef } from '../sim/classes.js';
 import { ENEMY_DEFS } from '../sim/enemyTypes.js';
-import { clampLevel } from '../sim/enemyLevels.js';
+import { clampLevel, killScore } from '../sim/enemyLevels.js';
 import { HordeEngine } from '../sim/HordeEngine.js';
 import { UPGRADES, UPGRADE_ORDER } from '../sim/progression.js';
 import { pickTarget } from '../sim/targeting.js';
@@ -426,6 +426,18 @@ export class GameScene extends Phaser.Scene {
       this.downedFor -= dt;
       this.me.flags = FLAG_DOWN;
       this.player.setAlpha(0.35);
+
+      // A wipe is a property of the room, not of the instant you happened to
+      // die. Checking it only at the moment of death meant whoever died second
+      // ended their run while the first player — merely *rebooting*, not out —
+      // carried on for another fifteen seconds before noticing. Re-checked
+      // every frame while down, every client reaches the same answer within one
+      // player broadcast.
+      if (this.squadWiped()) {
+        this.declareGameOver();
+        return;
+      }
+
       if (this.downedFor <= 0) this.respawn();
       return;
     }
@@ -767,9 +779,7 @@ export class GameScene extends Phaser.Scene {
     this.cfg.sfx.died();
 
     if (!this.canReboot()) {
-      this.gameOver = true;
-      this.downedFor = Infinity;
-      this.cfg.onBanner('SYSTEM FAILURE', 'No reboots remaining');
+      this.declareGameOver();
       return;
     }
 
@@ -790,7 +800,7 @@ export class GameScene extends Phaser.Scene {
    * it.
    */
   private canReboot(): boolean {
-    if (this.cfg.room.squadSize > 1) return this.squadmatesAlive() > 0;
+    if (this.cfg.room.squadSize > 1) return !this.squadWiped();
     return this.deaths <= LIVES.soloReboots;
   }
 
@@ -800,6 +810,44 @@ export class GameScene extends Phaser.Scene {
       if ((remote.state.flags & FLAG_DOWN) === 0) alive++;
     }
     return alive;
+  }
+
+  /**
+   * Every squadmate is down.
+   *
+   * Deliberately has no opinion about *this* client — callers ask only while
+   * they are themselves down, and mixing the two made the old version read as
+   * if it answered a question it did not.
+   *
+   * With no squadmate state at all the answer is "no". That happens when the
+   * roster lists a player who has not published yet, and ending somebody's run
+   * on missing information is a far worse failure than letting it continue.
+   */
+  private squadWiped(): boolean {
+    if (this.cfg.room.squadSize <= 1) return false;
+    if (this.remotes.size === 0) return false;
+    return this.squadmatesAlive() === 0;
+  }
+
+  /**
+   * End the run on this client.
+   *
+   * Shared by the two routes into it — dying with nothing left, and noticing a
+   * wipe while already down — so both produce the same state and the same
+   * banner.
+   */
+  private declareGameOver(): void {
+    if (this.gameOver) return;
+    this.gameOver = true;
+    this.downedFor = Infinity;
+    this.me.flags = FLAG_DOWN;
+    this.cfg.onBanner(
+      'SYSTEM FAILURE',
+      this.cfg.room.squadSize > 1 ? 'The squad was wiped out' : 'No reboots remaining',
+    );
+    // Tell the room immediately rather than waiting for the next 15Hz tick, so
+    // the other clients converge on the wipe in one hop instead of two.
+    this.publishPlayerNow();
   }
 
   /** Null in a squad, where reboots are not counted. */
@@ -997,7 +1045,7 @@ export class GameScene extends Phaser.Scene {
 
     for (const event of result.events) {
       if (event.t === 'death') {
-        this.killEnemyView(event.id, event.x, event.y, event.kind, event.level);
+        this.killEnemyView(event.id, event.x, event.y, event.kind, event.level, event.attacker);
       } else if (event.t === 'shot') {
         this.spawnEnemyBullet(event.x, event.y, event.vx, event.vy, event.damage);
       } else if (event.t === 'wave') {
@@ -1005,9 +1053,6 @@ export class GameScene extends Phaser.Scene {
         this.cfg.sfx.wave();
         this.cfg.onBanner(`WAVE ${event.n}`, `${event.size} hostile processes incoming`);
       }
-    }
-    for (const kill of result.kills) {
-      if (kill.attacker === this.me.id) this.score += kill.score;
     }
 
     // ---- the batched broadcast (requirement 3) -------------------------
@@ -1213,7 +1258,9 @@ export class GameScene extends Phaser.Scene {
       switch (event.t) {
         case 'death':
           // Peers play the burst; the host already did when it resolved the kill.
-          if (!this.horde) this.killEnemyView(event.id, event.x, event.y, event.kind, event.level);
+          if (!this.horde) {
+            this.killEnemyView(event.id, event.x, event.y, event.kind, event.level, event.attacker);
+          }
           break;
         case 'shot':
           if (!this.horde) this.spawnEnemyBullet(event.x, event.y, event.vx, event.vy, event.damage);
@@ -1369,13 +1416,31 @@ export class GameScene extends Phaser.Scene {
     return view;
   }
 
-  private killEnemyView(id: EnemyId, x: number, y: number, kind: EnemyKind, level: number): void {
+  /**
+   * A confirmed kill, from the host's death event.
+   *
+   * Scoring happens here rather than from the host's own `StepResult`, because
+   * only one machine sees that: a peer's kills were resolved on the host and
+   * credited to nobody locally, so a peer's score never moved off zero. The
+   * death event reaches every client, carries the attacker, and is already the
+   * thing that plays the burst — so it is the one place a kill is observed, on
+   * the host and on peers alike.
+   */
+  private killEnemyView(
+    id: EnemyId,
+    x: number,
+    y: number,
+    kind: EnemyKind,
+    level: number,
+    attacker: string,
+  ): void {
     const view = this.enemies.get(id);
     const def = ENEMY_DEFS[kind] ?? ENEMY_DEFS[EnemyKind.GlitchBug];
     if (view) {
       view.sprite.destroy();
       this.enemies.delete(id);
     }
+    if (attacker && attacker === this.me.id) this.score += killScore(def.score, clampLevel(level));
     this.fx.enemyBurst(x, y, def.colour, kind === EnemyKind.TrojanTank ? 2 : 1);
     this.cfg.sfx.kill(kind === EnemyKind.TrojanTank);
     this.progression.dropFrom(x, y, def, id, clampLevel(level));

@@ -857,6 +857,14 @@ await step('a reboot never puts you back inside the swarm', async () => {
     const scene = window.glitchburst.game.scene.getScene('game');
     clearInterval(window.__keepAlive);
 
+    // Hold the horde still for the duration. Waves stream in now, so without
+    // this a fresh spawn can land near the relocation point between the
+    // reboot and the measurement — the relocation is correct and the test
+    // reads a stale answer.
+    const heldTimer = scene.horde.waveTimer;
+    scene.horde.waveTimer = 999;
+    scene.horde.spawnQueue = 0;
+
     // Bury the player: a ring of enemies right on top of them, which is what a
     // death at the cap actually looks like.
     //
@@ -932,6 +940,8 @@ await step('a reboot never puts you back inside the swarm', async () => {
       inArena:
         scene.me.x > 0 && scene.me.y > 0 && scene.me.x < world.width && scene.me.y < world.height,
     };
+
+    scene.horde.waveTimer = heldTimer;
 
     return { buried, before, after, moved, inArena, corner };
   }, { safe: LIVES.rebootSafeRadius, world: { width: WORLD.width, height: WORLD.height } });

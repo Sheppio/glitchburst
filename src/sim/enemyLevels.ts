@@ -96,6 +96,18 @@ export function levelRewardScale(level: number): number {
   return 1 + (clampLevel(level) - 1) * 0.5;
 }
 
+/**
+ * Points for killing one, given its base value and level.
+ *
+ * Shared, because two machines compute it independently: the host resolves the
+ * kill, but every client scores its *own* kills off the broadcast death event.
+ * Two copies of this arithmetic would drift and the squad would disagree about
+ * the scoreboard.
+ */
+export function killScore(baseScore: number, level: number): number {
+  return Math.round(baseScore * levelRewardScale(level));
+}
+
 /** The level a wave spawns by default, before spread. */
 export function baseLevelForWave(wave: number): number {
   return clampLevel(1 + Math.floor((wave - 1) / LEVELS.wavesPerLevel));

@@ -5,6 +5,8 @@
  * than one client is present.
  */
 import { buildRig, launch, reporter, startServer } from './rig.mjs';
+import { ENEMY_DEFS } from '../dist/sim/enemyTypes.js';
+import { killScore } from '../dist/sim/enemyLevels.js';
 
 await buildRig();
 const { server, url } = await startServer();
@@ -107,6 +109,53 @@ check('peer horde matches the host within a couple of enemies',
   `host ${aState.enemiesOnScreen} vs peer ${bState.enemiesOnScreen}`);
 
 check('peer publishes no horde snapshots', bState.hordePublished === 0);
+
+/* ------------------------------------------------------------- scoring */
+
+{
+  // Only the host resolves a kill, but every client has to score its own. The
+  // old code credited kills from the host's own StepResult, which no peer ever
+  // sees — so a peer's score sat at zero for the whole match however much it
+  // killed.
+  await b.bringToFront();
+  const peerBefore = await b.evaluate(() => window.glitchburst.game.scene.getScene('game').score);
+  const hostBefore = await a.evaluate(() => window.glitchburst.game.scene.getScene('game').score);
+
+  const killed = await b.evaluate(async () => {
+    const scene = window.glitchburst.game.scene.getScene('game');
+    const target = [...scene.enemies.keys()][0];
+    const view = scene.enemies.get(target);
+    if (!view) return { ok: false, why: 'no enemy to shoot' };
+    const shot = { kind: view.kind, level: view.level };
+    // The real attacker-authority path: report damage, host applies it, host
+    // broadcasts the death back to the room.
+    scene.reportDamage(target, 99999);
+    for (let i = 0; i < 180 && scene.enemies.has(target); i++) {
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+    return { ok: !scene.enemies.has(target), why: 'enemy survived the report', shot };
+  });
+
+  const worth = killed.shot ? killScore(ENEMY_DEFS[killed.shot.kind].score, killed.shot.level) : 0;
+
+  // The death event has to make the round trip before the score moves.
+  await b.waitForFunction(
+    (before) => window.glitchburst.game.scene.getScene('game').score > before,
+    peerBefore,
+    { timeout: 6000 },
+  ).catch(() => {});
+  const peerAfter = await b.evaluate(() => window.glitchburst.game.scene.getScene('game').score);
+
+  check('a peer scores its own kills', killed.ok && peerAfter - peerBefore >= worth,
+    killed.ok ? `peer score ${peerBefore} → ${peerAfter} for a kill worth ${worth}` : killed.why);
+
+  // And the credit is not handed to everybody. Compared against the kill's own
+  // value rather than against zero, because collecting a chip is worth a point
+  // and the host is standing in the drop.
+  const hostAfter = await a.evaluate(() => window.glitchburst.game.scene.getScene('game').score);
+  check('the host is not credited for a peer kill', hostAfter - hostBefore < worth,
+    `host gained ${hostAfter - hostBefore} (chips) against a kill worth ${worth}`);
+}
 
 /* --------------------------------------------------------- enemy levels */
 
@@ -276,6 +325,26 @@ const wiped = await b.evaluate(async () => {
 });
 check('a wipe ends the run', wiped.gameOver && wiped.veiled,
   `${wiped.mates} squadmates standing, failure screen ${wiped.veiled ? 'shown' : 'MISSING'}`);
+
+// A is still sitting in a long reboot. Under the old rule — which only asked
+// "can I reboot?" at the instant of death — it would serve that reboot out,
+// come back alive, and only discover the wipe the next time it died. That was
+// the fifteen-second gap between one client's SYSTEM FAILURE and the other's.
+await a.bringToFront();
+const together = await a
+  .waitForFunction(() => window.glitchburst.game.scene.getScene('game').gameOver, null, { timeout: 6000 })
+  .then(() => true)
+  .catch(() => false);
+
+const aState2 = await a.evaluate(() => {
+  const scene = window.glitchburst.game.scene.getScene('game');
+  return { gameOver: scene.gameOver, waiting: scene.downedFor, veiled: !document.getElementById('over-veil').hidden };
+});
+check('both clients end the run, not just the one that died last',
+  together && aState2.gameOver,
+  aState2.gameOver
+    ? `the rebooting client noticed the wipe instead of serving out its reboot`
+    : `still rebooting in ${Math.round(aState2.waiting)}s with the squad wiped`);
 
 // Restore both clients for the tests that follow.
 for (const page of [a, b]) {
