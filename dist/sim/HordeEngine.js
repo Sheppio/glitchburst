@@ -243,9 +243,7 @@ export class HordeEngine {
             if (e.hp <= 0) {
                 this.enemies.delete(id);
                 const def = ENEMY_DEFS[e.kind];
-                result.events.push({
-                    t: 'death', id: e.id, x: e.x, y: e.y, kind: e.kind, level: e.level, attacker: dmg.attacker,
-                });
+                result.events.push({ t: 'death', id: e.id, x: e.x, y: e.y, kind: e.kind, level: e.level });
                 result.kills.push({
                     id: e.id,
                     kind: e.kind,

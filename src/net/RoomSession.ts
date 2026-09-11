@@ -20,7 +20,7 @@ export interface RoomEvents extends Record<string, unknown> {
   /** Fired whenever authority moves — including the initial claim on room creation. */
   hostChange: { hostId: PlayerId | null; isHost: boolean; reason: 'initial' | 'election' | 'yield' };
   /** Host-authored liveness data, useful for the HUD on peers. */
-  hostStats: { enemyCount: number; wave: number; paused: boolean };
+  hostStats: { enemyCount: number; wave: number; paused: boolean; score: number | null };
   /** This client arrived at a room that already holds a full squad of four. */
   roomFull: { capacity: number };
 }
@@ -55,10 +55,11 @@ export class RoomSession {
   private announcedFull = false;
 
   /** Set by the game each tick so the heartbeat can carry live stats. */
-  hostStatsProvider: () => { enemyCount: number; wave: number; paused: boolean } = () => ({
+  hostStatsProvider: () => { enemyCount: number; wave: number; paused: boolean; score: number } = () => ({
     enemyCount: 0,
     wave: 0,
     paused: false,
+    score: 0,
   });
 
   constructor(
@@ -198,7 +199,9 @@ export class RoomSession {
     this.lastHostBeat = performance.now();
     // Carries the pause flag, so a client joining a paused room learns about it
     // within one heartbeat instead of running while everyone else is frozen.
-    this.events.emit('hostStats', { enemyCount: hb.enemyCount, wave: hb.wave, paused: hb.paused });
+    this.events.emit('hostStats', {
+      enemyCount: hb.enemyCount, wave: hb.wave, paused: hb.paused, score: hb.score,
+    });
 
     // Split brain: the lower id always wins, so step down immediately.
     if (this._isHost && hb.hostId < this.playerId) {
@@ -220,7 +223,9 @@ export class RoomSession {
     const stats = this.hostStatsProvider();
     this.net.publish(
       Topics.hostBeat(this.roomId),
-      encodeHeartbeat(this.playerId, ++this.beatSeq, stats.enemyCount, stats.wave, stats.paused),
+      encodeHeartbeat(
+        this.playerId, ++this.beatSeq, stats.enemyCount, stats.wave, stats.paused, stats.score,
+      ),
     );
   }
 

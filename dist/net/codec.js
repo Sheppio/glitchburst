@@ -79,10 +79,7 @@ export function encodeEvents(events) {
     for (const e of events) {
         switch (e.t) {
             case 'death':
-                // The attacker rides along so every client can score its own kills.
-                // The host is the only machine that *resolves* a kill, but it is not
-                // the only one that needs to know whose it was — see `killEnemyView`.
-                parts.push(`D:${e.id},${i(e.x)},${i(e.y)},${e.kind},${clampLevel(e.level)},${e.attacker}`);
+                parts.push(`D:${e.id},${i(e.x)},${i(e.y)},${e.kind},${clampLevel(e.level)}`);
                 break;
             case 'shot':
                 parts.push(`P:${e.id},${i(e.x)},${i(e.y)},${i(e.vx)},${i(e.vy)},${i(e.damage)}`);
@@ -114,7 +111,6 @@ export function decodeEvents(payload) {
                 y: num(f[2]),
                 kind: num(f[3]),
                 level: f.length >= 5 ? clampLevel(num(f[4])) : 1,
-                attacker: f[5] ?? '',
             });
         }
         else if (tag === 'P' && f.length >= 6) {
@@ -212,21 +208,25 @@ export function decodePresence(id, payload) {
     return { id, name: f[0], cls: f[1], host: num(f[2]), alive: num(f[3]) };
 }
 /* ------------------------------------------------------------- heartbeat */
-export function encodeHeartbeat(hostId, seq, enemyCount, wave, paused) {
-    return [hostId, seq, enemyCount, wave, paused ? 1 : 0].join(FLD);
+export function encodeHeartbeat(hostId, seq, enemyCount, wave, paused, score) {
+    return [hostId, seq, enemyCount, wave, paused ? 1 : 0, i(score)].join(FLD);
 }
 export function decodeHeartbeat(payload) {
     const f = payload.split(FLD);
     if (f.length < 4)
         return null;
-    // The pause flag is a later addition, so it is read optionally: a client on
-    // an older build still produces a valid heartbeat, it just never pauses.
+    // The pause flag and the score are later additions, so both are read
+    // optionally: a client on an older build still produces a valid heartbeat, it
+    // just never pauses and reports no score. Score is `null` rather than 0 when
+    // absent, because 0 is a legitimate score and adopting it would wipe the
+    // scoreboard every beat.
     return {
         hostId: f[0],
         seq: num(f[1]),
         enemyCount: num(f[2]),
         wave: num(f[3]),
         paused: f.length > 4 && num(f[4]) === 1,
+        score: f.length > 5 ? num(f[5]) : null,
     };
 }
 /** Host -> room: `1|0,hostId,displayName`. */

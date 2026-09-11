@@ -310,9 +310,6 @@ export class GameScene extends Phaser.Scene {
         radius: this.def.radius,
         canCollect: this.downedFor <= 0,
       }),
-      award: (score) => {
-        this.score += score;
-      },
       banner: (text, sub) => this.cfg.onBanner(text, sub),
       rumble: (weak, strong, ms) => this.cfg.input.triggerRumble(weak, strong, ms),
     });
@@ -350,14 +347,19 @@ export class GameScene extends Phaser.Scene {
       enemyCount: this.horde?.enemyCount ?? this.enemies.size,
       wave: this.horde?.waveNumber ?? this.lastWave,
       paused: this.paused,
+      score: this.score,
     });
 
     this.unsubs.push(
       room.events.on('hostChange', ({ isHost, reason }) => this.onHostChange(isHost, reason)),
-      room.events.on('hostStats', ({ wave, paused }) => {
+      room.events.on('hostStats', ({ wave, paused, score }) => {
         this.lastWave = wave;
         // A client that joined mid-pause, or missed the pause message, syncs here.
         if (!this.cfg.room.isHost && paused !== this.paused) this.applyPause(paused, this.pausedBy);
+        // Peers count kills locally for instant feedback and take the host's
+        // total as the truth. Null means a host on an older build that does not
+        // report one — better to keep the local tally than zero the board.
+        if (!this.horde && score !== null) this.score = score;
       }),
       room.events.on('peerLeave', ({ id }) => this.removeRemote(id)),
     );
@@ -1045,7 +1047,7 @@ export class GameScene extends Phaser.Scene {
 
     for (const event of result.events) {
       if (event.t === 'death') {
-        this.killEnemyView(event.id, event.x, event.y, event.kind, event.level, event.attacker);
+        this.killEnemyView(event.id, event.x, event.y, event.kind, event.level);
       } else if (event.t === 'shot') {
         this.spawnEnemyBullet(event.x, event.y, event.vx, event.vy, event.damage);
       } else if (event.t === 'wave') {
@@ -1259,7 +1261,7 @@ export class GameScene extends Phaser.Scene {
         case 'death':
           // Peers play the burst; the host already did when it resolved the kill.
           if (!this.horde) {
-            this.killEnemyView(event.id, event.x, event.y, event.kind, event.level, event.attacker);
+            this.killEnemyView(event.id, event.x, event.y, event.kind, event.level);
           }
           break;
         case 'shot':
@@ -1421,26 +1423,23 @@ export class GameScene extends Phaser.Scene {
    *
    * Scoring happens here rather than from the host's own `StepResult`, because
    * only one machine sees that: a peer's kills were resolved on the host and
-   * credited to nobody locally, so a peer's score never moved off zero. The
-   * death event reaches every client, carries the attacker, and is already the
-   * thing that plays the burst — so it is the one place a kill is observed, on
-   * the host and on peers alike.
+   * credited to nobody locally, so a peer's score never moved off zero.
+   *
+   * The score is the *squad's*, not yours — this is a co-op game with one
+   * SCORE readout, and two clients showing different numbers for it reads as a
+   * bug whichever number is "right". So every client counts every kill, from
+   * the death event that already reaches all of them. The host's running total
+   * rides the heartbeat twice a second and peers adopt it, which repairs the
+   * drift a dropped QoS-0 death event would otherwise leave permanently.
    */
-  private killEnemyView(
-    id: EnemyId,
-    x: number,
-    y: number,
-    kind: EnemyKind,
-    level: number,
-    attacker: string,
-  ): void {
+  private killEnemyView(id: EnemyId, x: number, y: number, kind: EnemyKind, level: number): void {
     const view = this.enemies.get(id);
     const def = ENEMY_DEFS[kind] ?? ENEMY_DEFS[EnemyKind.GlitchBug];
     if (view) {
       view.sprite.destroy();
       this.enemies.delete(id);
     }
-    if (attacker && attacker === this.me.id) this.score += killScore(def.score, clampLevel(level));
+    this.score += killScore(def.score, clampLevel(level));
     this.fx.enemyBurst(x, y, def.colour, kind === EnemyKind.TrojanTank ? 2 : 1);
     this.cfg.sfx.kill(kind === EnemyKind.TrojanTank);
     this.progression.dropFrom(x, y, def, id, clampLevel(level));

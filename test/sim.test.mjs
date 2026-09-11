@@ -7,6 +7,7 @@ import { HordeEngine } from '../dist/sim/HordeEngine.js';
 import {
   encodeHorde, decodeHorde, encodeEvents, decodeEvents,
   encodePlayer, decodePlayer, encodeField, decodeField, sanitizeName,
+  encodeHeartbeat, decodeHeartbeat,
 } from '../dist/net/codec.js';
 import { HORDE, PLAYER, TURN_RATE_RAD_PER_SEC } from '../dist/config.js';
 import { PlayerProgress, PROGRESSION, UPGRADES, UPGRADE_ORDER } from '../dist/sim/progression.js';
@@ -92,6 +93,22 @@ const run = (engine, seconds, t = targets(1)) => {
   check('commas in a callsign cannot corrupt the record',
     decodePlayer('x', encodePlayer({ ...state, name: 'AB,CD' })).cls === 'glitcher',
     `sanitized to "${sanitizeName('AB,CD')}"`);
+}
+
+{
+  // The heartbeat carries the room score, which is what keeps two clients
+  // agreeing after a dropped death event.
+  const beat = decodeHeartbeat(encodeHeartbeat('host1', 7, 42, 9, true, 1234));
+  check('heartbeat round-trips the room score',
+    beat.hostId === 'host1' && beat.score === 1234 && beat.wave === 9 && beat.enemyCount === 42 && beat.paused);
+
+  // Score is optional on the wire. Absent must not read as zero: zero is a
+  // legitimate score, and adopting it every beat would wipe the board.
+  const legacy = decodeHeartbeat(['host1', '7', '42', '9', '1'].join(','));
+  check('a heartbeat without a score reports null, not zero', legacy.score === null,
+    `got ${JSON.stringify(legacy.score)}`);
+  check('a zero score is still reported as zero', decodeHeartbeat(encodeHeartbeat('h', 1, 0, 0, false, 0)).score === 0);
+  check('a malformed heartbeat is rejected', decodeHeartbeat('nonsense') === null);
 }
 
 {

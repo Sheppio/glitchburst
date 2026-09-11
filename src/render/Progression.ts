@@ -64,7 +64,6 @@ export interface ProgressionHost {
   readonly fx: Fx;
   readonly sfx: Sfx;
   collector(): Collector;
-  award(score: number): void;
   banner(text: string, sub?: string): void;
   rumble(weak: number, strong: number, durationMs: number): void;
 }
@@ -248,7 +247,6 @@ export class ProgressionSystem {
 
   private collectChip(): void {
     const who = this.host.collector();
-    this.host.award(1);
     const earned = this.progress.addChip();
     this.host.fx.chipSpark(who.x, who.y);
     // Pitch climbs as the set fills, so the run-up to a power-up is audible.
@@ -265,9 +263,9 @@ export class ProgressionSystem {
     const who = this.host.collector();
     const upgrade = this.progress.rollUpgrade();
     if (!upgrade) {
-      // Everything is maxed; bank it as score instead of dropping a dud.
-      this.host.award(250);
-      this.host.banner('FULLY OPTIMISED', '+250');
+      // Unreachable while damage is endless, and kept only so capping it again
+      // cannot silently drop a power-up on the floor.
+      this.host.banner('FULLY OPTIMISED', 'Nothing left to install');
       return;
     }
 

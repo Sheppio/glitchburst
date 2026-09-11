@@ -85,7 +85,7 @@ export function decodeHorde(payload: string): EnemySnapshot[] {
 /* ----------------------------------------------------------- horde events */
 
 export type HordeEvent =
-  | { t: 'death'; id: string; x: number; y: number; kind: EnemyKind; level: number; attacker: string }
+  | { t: 'death'; id: string; x: number; y: number; kind: EnemyKind; level: number }
   | { t: 'shot'; id: string; x: number; y: number; vx: number; vy: number; damage: number }
   | { t: 'wave'; n: number; size: number };
 
@@ -95,10 +95,7 @@ export function encodeEvents(events: readonly HordeEvent[]): string {
   for (const e of events) {
     switch (e.t) {
       case 'death':
-        // The attacker rides along so every client can score its own kills.
-        // The host is the only machine that *resolves* a kill, but it is not
-        // the only one that needs to know whose it was — see `killEnemyView`.
-        parts.push(`D:${e.id},${i(e.x)},${i(e.y)},${e.kind},${clampLevel(e.level)},${e.attacker}`);
+        parts.push(`D:${e.id},${i(e.x)},${i(e.y)},${e.kind},${clampLevel(e.level)}`);
         break;
       case 'shot':
         parts.push(`P:${e.id},${i(e.x)},${i(e.y)},${i(e.vx)},${i(e.vy)},${i(e.damage)}`);
@@ -129,7 +126,6 @@ export function decodeEvents(payload: string): HordeEvent[] {
         y: num(f[2]!),
         kind: num(f[3]!) as EnemyKind,
         level: f.length >= 5 ? clampLevel(num(f[4]!)) : 1,
-        attacker: f[5] ?? '',
       });
     } else if (tag === 'P' && f.length >= 6) {
       out.push({
@@ -256,23 +252,28 @@ export function encodeHeartbeat(
   enemyCount: number,
   wave: number,
   paused: boolean,
+  score: number,
 ): string {
-  return [hostId, seq, enemyCount, wave, paused ? 1 : 0].join(FLD);
+  return [hostId, seq, enemyCount, wave, paused ? 1 : 0, i(score)].join(FLD);
 }
 
 export function decodeHeartbeat(
   payload: string,
-): { hostId: string; seq: number; enemyCount: number; wave: number; paused: boolean } | null {
+): { hostId: string; seq: number; enemyCount: number; wave: number; paused: boolean; score: number | null } | null {
   const f = payload.split(FLD);
   if (f.length < 4) return null;
-  // The pause flag is a later addition, so it is read optionally: a client on
-  // an older build still produces a valid heartbeat, it just never pauses.
+  // The pause flag and the score are later additions, so both are read
+  // optionally: a client on an older build still produces a valid heartbeat, it
+  // just never pauses and reports no score. Score is `null` rather than 0 when
+  // absent, because 0 is a legitimate score and adopting it would wipe the
+  // scoreboard every beat.
   return {
     hostId: f[0]!,
     seq: num(f[1]!),
     enemyCount: num(f[2]!),
     wave: num(f[3]!),
     paused: f.length > 4 && num(f[4]!) === 1,
+    score: f.length > 5 ? num(f[5]!) : null,
   };
 }
 

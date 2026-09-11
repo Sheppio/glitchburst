@@ -356,6 +356,47 @@ await step('auto-move drives the client with no input at all', async () => {
   };
 });
 
+await step('the aiming cursor is a reticle, not an arrow', async () => {
+  const out = await page.evaluate(async () => {
+    const canvas = document.querySelector('#game-root canvas');
+    const css = getComputedStyle(canvas).cursor;
+    const uri = css.match(/url\("([^"]+)"\)/)?.[1];
+
+    // A data URI the browser cannot decode is dropped silently from the
+    // computed value, leaving only the fallback keyword — and the cursor would
+    // just look normal. Decoding it is the only check that means anything.
+    const decoded = uri
+      ? await new Promise((res) => {
+          const img = new Image();
+          img.onload = () => res({ w: img.naturalWidth, h: img.naturalHeight });
+          img.onerror = () => res(null);
+          img.src = uri;
+        })
+      : null;
+
+    return {
+      decoded,
+      // Hotspot at the middle, so what you are aiming at is inside the ring.
+      centred: / 16 16/.test(css),
+      fallback: /crosshair/.test(css),
+      // Menus keep an ordinary pointer; this is for aiming only.
+      button: getComputedStyle(document.getElementById('btn-leave')).cursor,
+    };
+  });
+
+  return {
+    ok:
+      out.decoded?.w === 32 &&
+      out.decoded?.h === 32 &&
+      out.centred &&
+      out.fallback &&
+      out.button === 'pointer',
+    note: out.decoded
+      ? `${out.decoded.w}x${out.decoded.h} reticle, hotspot centred, buttons still "${out.button}"`
+      : 'the cursor image did not decode — the browser fell back to a keyword',
+  };
+});
+
 await step('client wins election and becomes host', async () => {
   await page.waitForFunction(() => window.glitchburst?.room?.isHost === true, null, { timeout: 6000 });
   const host = await page.textContent('#hud-host');
@@ -768,13 +809,25 @@ await step('health regenerates once out of combat, not during it', async () => {
     const scene = window.glitchburst.game.scene.getScene('game');
     clearInterval(window.__keepAlive);
 
-    // Step out of the swarm first. Left where it was, the player takes contact
-    // damage throughout, which both suppresses regen (correctly — being hit
-    // resets the timer) and masks it. The test would then be measuring the
-    // horde, not regeneration.
+    // Get away from the horde, and make sure it stays away. Moving the player
+    // alone is not enough: enemies chase, waves spawn in a ring around whoever
+    // is nearest, and a single Glitch Bug landing one 7-point hit turns this
+    // into a measurement of contact damage rather than of regeneration. Seen
+    // failing exactly that way, with health *dropping* over the window.
     scene.me.x = 140;
     scene.me.y = 140;
     scene.me.hp = 40;
+
+    const heldTimer = scene.horde.waveTimer;
+    scene.horde.waveTimer = 999;
+    scene.horde.spawnQueue = 0;
+    for (const [id, view] of scene.enemies) {
+      const live = scene.horde.enemies.get(id);
+      if (live) { live.x = 2200; live.y = 1400; live.stun = 30; }
+      view.tx = 2200;
+      view.ty = 1400;
+      view.sprite.setPosition(2200, 1400);
+    }
 
     // Freshly hit: regeneration must stay off.
     scene.sinceDamage = 0;
@@ -786,6 +839,7 @@ await step('health regenerates once out of combat, not during it', async () => {
     await new Promise((r) => setTimeout(r, 900));
     const afterDisengaging = scene.me.hp;
 
+    scene.horde.waveTimer = heldTimer;
     scene.me.hp = scene.me.maxHp;
     window.__keepAlive = setInterval(() => { scene.me.hp = scene.me.maxHp; }, 100);
     return { duringCombat, afterDisengaging };

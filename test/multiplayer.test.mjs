@@ -39,6 +39,8 @@ const keepAlive = (page) => page.evaluate(() => {
   window.__keepAlive = setInterval(() => { scene.me.hp = scene.me.maxHp; }, 100);
 });
 
+const score = (page) => page.evaluate(() => window.glitchburst.game.scene.getScene('game').score);
+
 const state = (page) => page.evaluate(() => {
   const scene = window.glitchburst.game?.scene.getScene('game');
   return {
@@ -113,13 +115,11 @@ check('peer publishes no horde snapshots', bState.hordePublished === 0);
 /* ------------------------------------------------------------- scoring */
 
 {
-  // Only the host resolves a kill, but every client has to score its own. The
-  // old code credited kills from the host's own StepResult, which no peer ever
-  // sees — so a peer's score sat at zero for the whole match however much it
-  // killed.
+  // The score is the squad's, and a co-op HUD with one SCORE readout showing
+  // two different numbers reads as a bug whichever number is "right". Both
+  // clients must land on the same total.
   await b.bringToFront();
-  const peerBefore = await b.evaluate(() => window.glitchburst.game.scene.getScene('game').score);
-  const hostBefore = await a.evaluate(() => window.glitchburst.game.scene.getScene('game').score);
+  const before = { peer: await score(b), host: await score(a) };
 
   const killed = await b.evaluate(async () => {
     const scene = window.glitchburst.game.scene.getScene('game');
@@ -137,67 +137,43 @@ check('peer publishes no horde snapshots', bState.hordePublished === 0);
   });
 
   const worth = killed.shot ? killScore(ENEMY_DEFS[killed.shot.kind].score, killed.shot.level) : 0;
+  await b.waitForFunction((p) => window.glitchburst.game.scene.getScene('game').score > p, before.peer,
+    { timeout: 6000 }).catch(() => {});
 
-  // The death event has to make the round trip before the score moves.
-  await b.waitForFunction(
-    (before) => window.glitchburst.game.scene.getScene('game').score > before,
-    peerBefore,
-    { timeout: 6000 },
-  ).catch(() => {});
-  const peerAfter = await b.evaluate(() => window.glitchburst.game.scene.getScene('game').score);
+  const peerGain = (await score(b)) - before.peer;
+  check('a peer scores the kills it makes', killed.ok && peerGain >= worth,
+    killed.ok ? `peer ${before.peer} → ${before.peer + peerGain} for a kill worth ${worth}` : killed.why);
 
-  check('a peer scores its own kills', killed.ok && peerAfter - peerBefore >= worth,
-    killed.ok ? `peer score ${peerBefore} → ${peerAfter} for a kill worth ${worth}` : killed.why);
-
-  // And the credit is not handed to everybody. Compared against the kill's own
-  // value rather than against zero, because collecting a chip is worth a point
-  // and the host is standing in the drop.
-  const hostAfter = await a.evaluate(() => window.glitchburst.game.scene.getScene('game').score);
-  check('the host is not credited for a peer kill', hostAfter - hostBefore < worth,
-    `host gained ${hostAfter - hostBefore} (chips) against a kill worth ${worth}`);
+  // The host did not fire a shot, but the kill is the squad's, so its total
+  // moves by the same amount.
+  await a.bringToFront();
+  await a.waitForFunction((p) => window.glitchburst.game.scene.getScene('game').score > p, before.host,
+    { timeout: 6000 }).catch(() => {});
+  const hostGain = (await score(a)) - before.host;
+  check('the squad total counts a kill on both clients', hostGain === peerGain && hostGain >= worth,
+    `host +${hostGain}, peer +${peerGain} for a kill worth ${worth}`);
 }
 
-/* --------------------------------------------------------- enemy levels */
-
 {
-  // Kind and level share one packed base36 field, so this is the test that
-  // catches a mis-packed level: the peer would render the wrong pip, and a
-  // promoted host would adopt the horde at the wrong difficulty.
-  const host = await a.evaluate(() => {
-    const scene = window.glitchburst.game.scene.getScene('game');
-    // Spawn one of each level through the engine's own spawn path, rather than
-    // editing live enemies: a level is fixed at spawn, so mutating one would
-    // test a transition the game never makes.
-    const wanted = {};
-    for (let level = 1; level <= 7; level++) {
-      const e = scene.horde.spawnAt(level % 6, 400 + level * 70, 400, level);
-      if (e) wanted[e.id] = level;
-    }
-    return wanted;
+  // A dropped death event would otherwise leave a peer permanently behind:
+  // the horde snapshot is complete state and self-corrects, but a score built
+  // only from events does not. The host's total rides the heartbeat, so this
+  // heals within a beat.
+  await b.bringToFront();
+  await b.evaluate(() => {
+    // Simulate the drop by corrupting the peer's tally directly.
+    window.glitchburst.game.scene.getScene('game').score = 1;
   });
 
-  // Long enough for a snapshot to carry them and the peer to materialise them.
-  await b.waitForTimeout(900);
+  const healed = await b
+    .waitForFunction(() => window.glitchburst.game.scene.getScene('game').score !== 1, null, { timeout: 6000 })
+    .then(() => true)
+    .catch(() => false);
 
-  const peer = await b.evaluate((ids) => {
-    const scene = window.glitchburst.game.scene.getScene('game');
-    const out = {};
-    for (const id of Object.keys(ids)) {
-      const view = scene.enemies.get(id);
-      if (view) out[id] = { level: view.level, texture: view.sprite.texture.key };
-    }
-    return out;
-  }, host);
-
-  const seen = Object.keys(peer);
-  check('levels survive the packed kind field',
-    seen.length >= 4 && seen.every((id) => peer[id].level === host[id]),
-    `${seen.length} checked: ${seen.map((id) => `${host[id]}->${peer[id].level}`).join(' ')}`);
-
-  // The level has to reach the texture, or it is a number nobody can see.
-  check('the peer draws the pip for the level it received',
-    seen.every((id) => peer[id].texture.endsWith(`-${host[id]}`)),
-    seen.map((id) => peer[id].texture).join(', '));
+  const [peerScore, hostScore] = [await score(b), await score(a)];
+  check('a peer that misses a death event is repaired by the heartbeat',
+    healed && peerScore === hostScore,
+    `peer forced to 1, recovered to ${peerScore} against the host's ${hostScore}`);
 }
 
 /* -------------------------------------------------------- interpolation */

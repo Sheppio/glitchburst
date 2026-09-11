@@ -1,6 +1,6 @@
 # GLITCHBURST
 
-<!-- version -->**v0.2.14**<!-- /version --> — the build currently on Pages.
+<!-- version -->**v0.2.15**<!-- /version --> — the build currently on Pages.
 
 A co-op top-down horde shooter that runs entirely in the browser. **No game server.**
 Every client talks to a public MQTT broker over WebSockets, and one of them
@@ -38,7 +38,7 @@ Developing needs the compiler:
 ```bash
 npm install
 npm run watch      # tsc --watch, rebuilding dist/ on save
-npm test           # 245 tests: simulation, codec, single client, mobile, two clients
+npm test           # 249 tests: simulation, codec, single client, mobile, two clients
 ```
 
 `dist/` is committed on purpose — it is what GitHub Pages serves.
@@ -148,14 +148,26 @@ mutating directly, so there is one code path, not two.
 Healing follows the same logic in reverse: the Encoder's field is broadcast, and
 each client heals *itself* while standing in it.
 
-**Scoring rides on the death event**, which is the subtle half. The host is the
-only machine that *resolves* a kill, but it is not the only one that needs to
-know whose it was: crediting from the host's own step result means a peer's
-kills are credited on a machine that is not the peer, and a peer's score never
-leaves zero however much it kills. So the attacker's id goes out with the death
-event, and every client scores its own kills off the broadcast — the same event
-that already plays the burst and drops the chips, so a kill is observed in
-exactly one place on the host and on peers alike.
+**Scoring is the squad's, and rides on the death event.** The host is the only
+machine that *resolves* a kill, so crediting from its own step result credited a
+peer's kills on a machine that was not the peer: a peer's score never left zero
+however much it killed. Every client now counts every kill from the death event
+— the same broadcast that already plays the burst and drops the chips, so a kill
+is observed in exactly one place on the host and on peers alike.
+
+One shared total rather than a personal one, because this is co-op with a single
+SCORE readout: two clients showing different numbers for it reads as a bug
+whichever number is "right". That also means nothing local may contribute to it,
+so collecting a chip no longer awards a point — chips have their own counter and
+their own purpose, and a per-player pickup folded into a room total is
+un-syncable by construction.
+
+Events are QoS 0, so a dropped death would otherwise leave a peer permanently
+behind — the horde snapshot is complete state and self-corrects, but a score
+built only from events does not. The host's running total therefore rides the
+**heartbeat** twice a second and peers adopt it. Absent is transmitted as `null`
+rather than `0`: zero is a legitimate score, and adopting it every beat would
+wipe the board.
 
 ### Lag compensation
 
@@ -506,6 +518,14 @@ connected, so anything else would double-resolve every hit.
 Whichever device was used most recently owns the character — picking up a
 controller mid-run just works.
 
+The mouse gets a **reticle** over the arena rather than the usual arrow. An
+arrow's hotspot is its tip with the body trailing down and right, so what you
+are aiming at sits under the cursor's decoration rather than under its point —
+fine for clicking a button, poor for pointing a weapon. The reticle is
+symmetrical and centred on its hotspot, so the target is inside the ring. It is
+drawn black for the near-white arena, on a white halo so it stays readable
+crossing a Trojan Tank's hull or a health bar. Menus keep an ordinary pointer.
+
 ### Accessibility
 
 - **Auto-fire** — the weapon discharges whenever it comes off cooldown.
@@ -607,25 +627,25 @@ for a game — just don't build anything that needs privacy on top of it.
 npm test
 ```
 
-245 checks across four suites. The browser suites vendor Phaser locally and
+249 checks across four suites. The browser suites vendor Phaser locally and
 swap MQTT for a loopback stub that relays over `BroadcastChannel`, so two tabs
 share one "broker" and a real multi-client room can be tested offline.
 
-- **`sim.test.mjs`** (155) — codec round-trips, truncation tolerance, payload
+- **`sim.test.mjs`** (159) — codec round-trips, truncation tolerance, payload
   size at the cap, enemy cap, difficulty scaling, wave pacing, damage
   attribution, steering, decoy priority, host adoption, shockwave, progression
   and upgrade caps, deterministic drop rolls, turn-rate limiting, the auto-aim
   scoring formula, enemy levels and their health/reward curves, wave streaming
   and the tempo floor, the autopilot's steering bands and its survival against a
   live horde, and the audio volume curve.
-- **`smoke.test.mjs`** (40) — menus, settings persistence and migration, Phaser
+- **`smoke.test.mjs`** (41) — menus, settings persistence and migration, Phaser
   boot, election, 20 Hz batching, attacker-authority kills, point-blank hits,
   chip pickup and conversion, turn rate, abilities, pause, settings over a live
   match, and broadcast rate under a starved renderer.
 - **`mobile.test.mjs`** (14) — an emulated Pixel with a touchscreen and no
   mouse: taps through the whole flow, and hit-tests that nothing invisible is
   covering the buttons.
-- **`multiplayer.test.mjs`** (36) — two clients: election, peer unpacking,
+- **`multiplayer.test.mjs`** (35) — two clients: election, peer unpacking,
   mid-game join, interpolation, squad scaling, seeing each other's fire, pause
   propagation, and **host failover** with the horde carried through.
 
